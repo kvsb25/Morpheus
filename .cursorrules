@@ -1,0 +1,67 @@
+### **Project Context: Autonomous SRE Agent & LTOV Monitoring System**
+
+**Overview:** This project implements an autonomous Site Reliability Engineering (SRE) workflow using a strict two-phase Root Cause Analysis (RCA) methodology: Phase 1 for deterministic, mechanical analysis (the "How") and Phase 2 for subjective, systemic interpretation (the "Why"). The system consists of an Express.js target service designed with specific fault endpoints, an LTOV (Loki, Tempo, OpenTelemetry, VictoriaMetrics) monitoring stack, and a LangGraph-based multi-agent RCA workflow.
+
+**Strict Rule for the Assistant:** Maintain absolute consistency with the exact variable names, tool names, telemetry keys, and state properties defined below across all generated code.
+
+---
+
+### **1. Architecture & Tech Stack**
+
+* **Target Application:** `express-victim-service` built with Node.js and Express. Auto-instrumented via `@opentelemetry/sdk-node`.
+* **Monitoring Pipeline (LTOV):** All telemetry routes exclusively through a central OpenTelemetry Collector (OTLP). Metrics are written to VictoriaMetrics (`prometheusremotewrite`), Traces to Grafana Tempo, and Logs to Grafana Loki.
+* **Agentic Orchestration:** Written in TypeScript using `@langchain/langgraph` and `zod` for strict tool parameter validation.
+* **Event-Driven Trigger:** The agent is purely reactive; it is triggered via a webhook from `vmalert` when a VictoriaMetrics PromQL threshold is breached.
+
+---
+
+### **2. Global LangGraph State Schema**
+
+When generating or interacting with the LangGraph state (using `Annotation.Root`), you must strictly adhere to this schema:
+
+* `messages`: `BaseMessage[]` (Must use append-only reducer)
+* `incident`: `{ alertId: string, metricName: string, timestamp: string } | null`
+* `traceId`: `string | null`
+* `deterministicAnalysis`: `string | null`
+* `interpretation`: `string | null`
+* `proposedAction`: `{ scriptName: string, params: Record<string, any>, reasoning: string } | null`
+* `humanApproval`: `"pending" | "approved" | "rejected" | "escalated"` (Default: `"pending"`)
+
+---
+
+### **3. Agent Nodes & Permitted Tools Matrix**
+
+Agent nodes strictly enforce the principle of least privilege. Do not allow an agent to use a tool not explicitly assigned to its node.
+
+| Node Name | Responsibility | Permitted Zod Tools & Schemas |
+| --- | --- | --- |
+| **`triageAgent`** | Extract OTel trace ID from alert webhook. | `fetch_alert_context`: `{ alert_id: z.string() }` |
+| **`deterministicAnalyst`** | Phase 1 RCA. Query telemetry for mechanical fault. | `query_traces_by_id`: `{ trace_id: z.string() }`<br>
+
+<br>`query_logs_by_trace`: `{ trace_id: z.string() }`<br>
+
+<br>`query_metrics`: `{ metric_name: z.string(), timeframe_minutes: z.number() }` |
+| **`interpretationAgent`** | Phase 2 RCA. Query repo/deployments for systemic context. | `fetch_repo_context`: `{ file_path: z.string(), function_name: z.string().optional() }`<br>
+
+<br>`fetch_deployment_history`: `{ timestamp_iso: z.string() }` |
+| **`remediationAgent`** | Formulate mitigation plan and script parameters. | `search_runbooks`: `{ fault_keyword: z.string() }`<br>
+
+<br>`check_current_capabilities`: `{ }` |
+| **`executionGatekeeper`** | Programmatic execution node. Triggers after human interrupt. | `execute_safe_script`: `{ script_name: z.string(), params: z.record(z.any()) }`<br>
+
+<br>`escalate_to_human_pager`: `{ reason: z.string(), severity_level: z.enum(["SEV-1", "SEV-2", "SEV-3"]) }` |
+
+---
+
+### **4. Standardized Telemetry Keys, Endpoints, & SLIs**
+
+When writing monitoring configurations, instrumentation logic, or PromQL queries, rely exclusively on these standardized targets:
+
+* **Endpoint A (Block Loop):** `GET /api/fault/block-loop`. Target Metric: `node_event_loop_utilization` via `perf_hooks`.
+* **Endpoint B (DB Crash):** `POST /api/fault/db-crash`. Manual active span required: `db.query_execution`.
+* *Required Attributes:* `db.statement`, `db.system: "postgresql"`, `http.request.body.sanitized`, `process.memory.rss.bytes`. Status must be set to `ERROR`.
+
+
+* **Endpoint C (Memory Leak):** `GET /api/fault/memory-leak`. Target Metric: `nodejs_v8_heap_space_size_bytes{space='old_space'}`.
+* **Endpoint D (FD Leak):** `GET /api/fault/fd-leak`. Target Metric: `process_open_fds`.
+* **Logging Standard:** Uses `winston`. All logs must automatically inject `trace_id` and `span_id`.
