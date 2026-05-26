@@ -1,0 +1,68 @@
+# All Victim Service telemetry enters via OTLP and is fanned out to LTOV backends.
+# The Express app must never connect directly to VictoriaMetrics, Tempo, or Loki.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+exporters:
+  # Metrics -> VictoriaMetrics (Prometheus remote write)
+  prometheusremotewrite/victoriametrics:
+    endpoint: http://victoria-metrics:8428/api/v1/write
+    resource_to_telemetry_conversion:
+      enabled: true
+    # Preserve OTel exemplars so PromQL spikes can carry trace_id for Tempo drill-down.
+    send_metadata: true
+
+  # Traces -> Grafana Tempo (OTLP)
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Logs -> Grafana Loki (native push API; logs arrive from OTLP log pipeline)
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    default_labels_enabled:
+      exporter: false
+      job: true
+    labels:
+      attributes:
+        service.name: "service_name"
+        component: "component"
+        level: "level"
+      resource:
+        service.name: "service_name"
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite/victoriametrics]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki]

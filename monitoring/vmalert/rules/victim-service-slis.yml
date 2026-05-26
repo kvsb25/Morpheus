@@ -1,0 +1,212 @@
+# PromQL SLIs for express-victim-service fault endpoints.
+# Metrics originate from OTLP -> Collector -> VictoriaMetrics remote write.
+groups:
+  - name: victim-service-node-runtime
+    interval: 30s
+    rules:
+      - alert: EventLoopUtilizationWarning
+        expr: |
+          max by (service_name) (node_event_loop_utilization{service_name="express-victim-service"}) > 0.75
+        for: 5m
+        labels:
+          severity: warning
+          metric_name: node_event_loop_utilization
+          service_name: express-victim-service
+        annotations:
+          summary: "High event loop utilization (warning)"
+          description: "ELU > 75% for 5m — sync blocking (e.g. GET /api/fault/block-loop)."
+          agent_rca_hint: "Look for CPU-intensive while loops, ReDoS, or synchronous array processing."
+
+      - alert: EventLoopUtilizationCritical
+        expr: |
+          max by (service_name) (node_event_loop_utilization{service_name="express-victim-service"}) > 0.90
+        for: 2m
+        labels:
+          severity: critical
+          metric_name: node_event_loop_utilization
+          service_name: express-victim-service
+        annotations:
+          summary: "Critical event loop utilization"
+          description: "ELU > 90% for 2m — event loop starvation likely from block-loop fault."
+          agent_rca_hint: "Correlate with node_event_loop_delay_p99_ms and HTTP p99 latency."
+
+      - alert: V8OldSpaceUtilizationWarning
+        expr: |
+          (
+            nodejs_v8_heap_space_size_bytes{service_name="express-victim-service", space="old_space"}
+            / on(service_name, space)
+            v8_heap_space_size_max_bytes{service_name="express-victim-service", space="old_space"}
+          ) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          metric_name: nodejs_v8_heap_space_size_bytes
+          service_name: express-victim-service
+        annotations:
+          summary: "V8 old_space heap utilization high (warning)"
+          description: "old_space > 80% of max for 10m — slow-burn leak (Endpoint C)."
+          agent_rca_hint: "Check global retained arrays on GET /api/fault/memory-leak."
+
+      - alert: V8OldSpaceUtilizationCritical
+        expr: |
+          (
+            nodejs_v8_heap_space_size_bytes{service_name="express-victim-service", space="old_space"}
+            / on(service_name, space)
+            v8_heap_space_size_max_bytes{service_name="express-victim-service", space="old_space"}
+          ) > 0.90
+        for: 5m
+        labels:
+          severity: critical
+          metric_name: nodejs_v8_heap_space_size_bytes
+          service_name: express-victim-service
+        annotations:
+          summary: "V8 old_space heap utilization critical"
+          description: "old_space > 90% of max for 5m — imminent OOM risk."
+          agent_rca_hint: "Inspect memory-leak endpoint traffic and heap growth rate."
+
+      - alert: V8OldSpaceGrowthRateAnomaly
+        expr: |
+          rate(nodejs_v8_heap_space_size_bytes{service_name="express-victim-service", space="old_space"}[5m]) > 52428800
+        for: 2m
+        labels:
+          severity: critical
+          metric_name: nodejs_v8_heap_space_size_bytes
+          service_name: express-victim-service
+        annotations:
+          summary: "V8 old_space growth rate anomaly"
+          description: "old_space growing faster than 50 MiB/s — aggressive memory leak."
+          agent_rca_hint: "Global array append pattern on memory-leak endpoint."
+
+      - alert: OpenFileDescriptorsWarning
+        expr: |
+          process_open_fds{service_name="express-victim-service"}
+          > (process_max_fds{service_name="express-victim-service"} * 0.80)
+        for: 5m
+        labels:
+          severity: warning
+          metric_name: process_open_fds
+          service_name: express-victim-service
+        annotations:
+          summary: "Open FD count high (warning)"
+          description: "process_open_fds > 80% of process_max_fds for 5m."
+          agent_rca_hint: "Streams opened but not closed (GET /api/fault/fd-leak)."
+
+      - alert: OpenFileDescriptorsCritical
+        expr: |
+          process_open_fds{service_name="express-victim-service"}
+          > (process_max_fds{service_name="express-victim-service"} * 0.95)
+        for: 2m
+        labels:
+          severity: critical
+          metric_name: process_open_fds
+          service_name: express-victim-service
+        annotations:
+          summary: "Open FD count critical"
+          description: "process_open_fds > 95% of ulimit — EMFILE risk."
+          agent_rca_hint: "Verify intentional fd-leak fault endpoint usage."
+
+  - name: victim-service-http
+    interval: 30s
+    rules:
+      - alert: ApiErrorRateWarning
+        expr: |
+          (
+            sum(rate(http_server_duration_milliseconds_count{service_name="express-victim-service", http_status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="express-victim-service"}[5m]))
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          metric_name: http_server_duration_milliseconds_count
+          service_name: express-victim-service
+        annotations:
+          summary: "HTTP 5xx error rate > 1%"
+          description: "Elevated server error rate — check db-crash and unhandled failures."
+          agent_rca_hint: "Use exemplar trace_id on 5xx histogram samples; query Tempo span db.query_execution."
+
+      - alert: ApiErrorRateCritical
+        expr: |
+          (
+            sum(rate(http_server_duration_milliseconds_count{service_name="express-victim-service", http_status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="express-victim-service"}[5m]))
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          metric_name: http_server_duration_milliseconds_count
+          service_name: express-victim-service
+        annotations:
+          summary: "HTTP 5xx error rate > 5%"
+          description: "Critical API error rate — likely POST /api/fault/db-crash bursts."
+          agent_rca_hint: "Correlate 5xx exemplars with Loki logs filtered by trace_id."
+
+      - alert: ApiP99LatencyWarning
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(http_server_duration_milliseconds_bucket{service_name="express-victim-service"}[5m]))
+          ) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          metric_name: http_server_request_duration_seconds
+          service_name: express-victim-service
+        annotations:
+          summary: "API p99 latency > 1s"
+          description: "p99 HTTP latency elevated for 5m."
+          agent_rca_hint: "High latency + normal ELU => external I/O; high latency + high ELU => sync CPU block."
+
+      - alert: ApiP99LatencyCritical
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(http_server_duration_milliseconds_bucket{service_name="express-victim-service"}[5m]))
+          ) > 3000
+        for: 2m
+        labels:
+          severity: critical
+          metric_name: http_server_request_duration_seconds
+          service_name: express-victim-service
+        annotations:
+          summary: "API p99 latency > 3s"
+          description: "Critical p99 latency — block-loop or downstream timeouts."
+          agent_rca_hint: "Compare with node_event_loop_utilization and db spans."
+
+  - name: victim-service-database
+    interval: 30s
+    rules:
+      - alert: DbPoolUtilizationWarning
+        expr: |
+          (
+            db_client_connections_usage{service_name="express-victim-service", state="active"}
+            / on(service_name)
+            db_client_connections_usage{service_name="express-victim-service", state="max"}
+          ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          metric_name: db_client_connections_usage
+          service_name: express-victim-service
+        annotations:
+          summary: "DB pool utilization > 85%"
+          description: "Simulated PostgreSQL pool pressure."
+          agent_rca_hint: "Trace db.query_execution spans from db-crash endpoint."
+
+      - alert: DbPoolExhaustedCritical
+        expr: |
+          (
+            db_client_connections_usage{service_name="express-victim-service", state="active"}
+            / on(service_name)
+            db_client_connections_usage{service_name="express-victim-service", state="max"}
+          ) >= 1
+        for: 1m
+        labels:
+          severity: critical
+          metric_name: db_client_connections_usage
+          service_name: express-victim-service
+        annotations:
+          summary: "DB connection pool exhausted"
+          description: "active_connections == max_connections for 1m."
+          agent_rca_hint: "Inspect db.query_execution ERROR spans and http.request.body.sanitized attribute."

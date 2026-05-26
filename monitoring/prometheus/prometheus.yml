@@ -1,0 +1,8 @@
+# VictoriaMetrics self-scrape (optional operational metrics for the TSDB itself).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: victoria-metrics
+    static_configs:
+      - targets: ["localhost:8428"]
