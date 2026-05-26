@@ -96,7 +96,7 @@ const logger = winston.createLogger({
 });
 
 const meter = metrics.getMeter("express-victim-service-meter");
-const eluHistogram = monitorEventLoopDelay({ resolution: 20 });
+const eluHistogram = monitorEventLoopDelay({ resolution: 20 }); // ELU = Event loop Utilization
 eluHistogram.enable();
 let previousElu = performance.eventLoopUtilization();
 let latestEluPercent = 0;
