@@ -2,7 +2,16 @@ const express = require("express");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { logger, startTelemetry, shutdownTelemetry, trace, SpanStatusCode, sanitizePayload, context } = require("./telemetry");
+const {
+  logger,
+  startTelemetry,
+  shutdownTelemetry,
+  trace,
+  SpanStatusCode,
+  sanitizePayload,
+  context,
+  recordDbPoolPressure,
+} = require("./telemetry");
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -24,10 +33,14 @@ app.get("/api/fault/block-loop", (req, res) => {
   const duration = Number.parseInt(req.query.duration, 10);
   const blockForMs = Number.isFinite(duration) && duration > 0 ? duration : 3000;
 
-  logger.warn("Fault injection: block event loop", { meta: { blockForMs } });
+  logger.warn("Fault injection: blocking event loop synchronously", {
+    component: "event-loop",
+    meta: { blockForMs, endpoint: "/api/fault/block-loop" },
+  });
+
   const start = Date.now();
   while (Date.now() - start < blockForMs) {
-    // Intentionally busy-spin so ELU reaches near 100% and reveals synchronous starvation.
+    // Busy-spin drives node_event_loop_utilization toward 1.0 for vmalert SLI firing.
     Math.sqrt(Math.random() * 1000);
   }
 
@@ -39,56 +52,49 @@ app.get("/api/fault/block-loop", (req, res) => {
 });
 
 app.post("/api/fault/db-crash", async (req, res) => {
-  await context.with(context.active(), async () => {
-    await tracer.startActiveSpan("db.query_execution", async (span) => {
-      // SRE agents need the exact failing statement and DB engine to classify deterministic query faults.
-      const sql = "SELECT * FROM users WHERE email = $1 FOR UPDATE NOWAIT";
-      span.setAttribute("db.statement", sql);
-      span.setAttribute("db.system", "postgresql");
+  recordDbPoolPressure();
 
-      try {
-        await simulateDbFailure(req.body);
-        res.status(200).json({ message: "Unexpected success" });
-      } catch (error) {
-        // Deterministic stack traces are critical for Phase-1 "how it failed" RCA.
-        span.recordException(error);
+  await tracer.startActiveSpan("db.query_execution", async (span) => {
+    const sql = "SELECT * FROM users WHERE email = $1 FOR UPDATE NOWAIT";
+    span.setAttribute("db.statement", sql);
+    span.setAttribute("db.system", "postgresql");
 
-        // Sanitized payload helps correlate bad inputs without leaking secrets in telemetry backends.
-        span.setAttribute("http.request.body.sanitized", JSON.stringify(sanitizePayload(req.body)));
+    try {
+      await simulateDbFailure(req.body);
+      res.status(200).json({ message: "Unexpected success" });
+    } catch (error) {
+      span.recordException(error);
+      span.setAttribute("http.request.body.sanitized", JSON.stringify(sanitizePayload(req.body)));
+      span.setAttribute("process.memory.rss.bytes", process.memoryUsage().rss);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
 
-        // Memory snapshot at failure helps detect pressure-related query instability.
-        span.setAttribute("process.memory.rss.bytes", process.memoryUsage().rss);
-        span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
-
-        logger.error("Fault injection: simulated DB crash", {
-          meta: {
-            error: error.message,
-            sanitizedBody: sanitizePayload(req.body),
-            rssBytes: process.memoryUsage().rss,
-          },
-        });
-
-        res.status(500).json({
-          endpoint: "/api/fault/db-crash",
-          message: "Simulated database timeout/crash",
+      logger.error("Database query connection timeout pool exhausted", {
+        component: "database-pool",
+        meta: {
           error: error.message,
-        });
-      } finally {
-        span.end();
-      }
-    });
+          sanitizedBody: sanitizePayload(req.body),
+          rssBytes: process.memoryUsage().rss,
+        },
+      });
+
+      res.status(500).json({
+        endpoint: "/api/fault/db-crash",
+        message: "Simulated database timeout/crash",
+        error: error.message,
+      });
+    }
   });
 });
 
 app.get("/api/fault/memory-leak", (_req, res) => {
-  // Retained references make old_space grow over time so OTel heap-space metrics surface a leak trend.
   const chunk = new Array(20_000).fill({
     payload: "x".repeat(1024),
     timestamp: Date.now(),
   });
   memoryLeakStore.push(chunk);
 
-  logger.warn("Fault injection: memory leak growth", {
+  logger.warn("Fault injection: retaining heap chunk in global store", {
+    component: "memory",
     meta: { retainedChunks: memoryLeakStore.length, rssBytes: process.memoryUsage().rss },
   });
 
@@ -105,8 +111,10 @@ app.get("/api/fault/fd-leak", (_req, res) => {
     const fd = fs.openSync(leakFilePath, "r");
     leakedFds.push(fd);
 
-    // Keeping descriptors open drives process_open_fds upward for deterministic FD exhaustion alerts.
-    logger.warn("Fault injection: file descriptor leak", { meta: { leakedFdCount: leakedFds.length } });
+    logger.warn("Fault injection: file descriptor opened and not closed", {
+      component: "filesystem",
+      meta: { leakedFdCount: leakedFds.length },
+    });
 
     res.status(200).json({
       endpoint: "/api/fault/fd-leak",
@@ -114,7 +122,10 @@ app.get("/api/fault/fd-leak", (_req, res) => {
       message: "Opened file descriptor and intentionally did not close it",
     });
   } catch (error) {
-    logger.error("FD leak injection failed", { meta: { error: error.message } });
+    logger.error("FD leak injection failed", {
+      component: "filesystem",
+      meta: { error: error.message },
+    });
     res.status(500).json({
       endpoint: "/api/fault/fd-leak",
       message: "Failed to leak file descriptor",
@@ -138,23 +149,23 @@ async function bootstrap() {
   const port = Number.parseInt(process.env.PORT, 10) || 3000;
   app.listen(port, () => {
     logger.info("express-victim-service listening", {
-      meta: {
-        port,
-        pid: process.pid,
-        host: os.hostname(),
-      },
+      component: "http-server",
+      meta: { port, pid: process.pid, host: os.hostname() },
     });
   });
 }
 
 bootstrap().catch((error) => {
-  logger.error("Failed to start service", { meta: { error: error.stack || error.message } });
+  logger.error("Failed to start service", {
+    component: "bootstrap",
+    meta: { error: error.stack || error.message },
+  });
   process.exit(1);
 });
 
 ["SIGINT", "SIGTERM"].forEach((signal) => {
   process.on(signal, async () => {
-    logger.info(`Received ${signal}, shutting down`);
+    logger.info(`Received ${signal}, shutting down`, { component: "lifecycle" });
     await shutdownTelemetry();
     process.exit(0);
   });
