@@ -64,6 +64,8 @@ services:
       PORT: "8080"
       OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in monitoring/.env — see ../.env.example}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID}
       TEMPO_URL: http://tempo:3200
       LOKI_URL: http://loki:3100
       VICTORIA_METRICS_URL: http://victoria-metrics:8428

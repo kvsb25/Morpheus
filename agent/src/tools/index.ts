@@ -233,6 +233,8 @@ export const checkCurrentCapabilities = tool(
 
 export const executeSafeScript = tool(
   async ({ script_name, params }) => {
+
+    // validate script and then run on terminal
     return JSON.stringify({
       status: "executed",
       script_name,
@@ -250,6 +252,7 @@ export const executeSafeScript = tool(
   }
 );
 
+// remove this tool
 export const escalateToHumanPager = tool(
   async ({ reason, severity_level }) => {
     return JSON.stringify({

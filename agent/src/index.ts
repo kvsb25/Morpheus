@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { HumanMessage } from "@langchain/core/messages";
 import { rcaGraph } from "./graph.js";
+import { sendSlackIncidentAlert } from "./utils/slack.js"
+import { GraphStateType } from "./state.js"
 
 export { rcaGraph } from "./graph.js";
 export { GraphState, type GraphStateType } from "./state.js";
@@ -22,7 +24,7 @@ export type VmalertWebhookPayload = {
 export async function runIncidentFromWebhook(
   payload: VmalertWebhookPayload,
   threadId: string
-): Promise<unknown> {
+): Promise<GraphStateType> {
   const alert = payload.alerts?.[0];
   const alertId = alert?.fingerprint ?? alert?.labels?.alertname ?? "unknown-alert";
   const metricName = alert?.labels?.metric_name ?? alert?.labels?.alertname ?? "unknown-metric";
@@ -56,11 +58,31 @@ export async function runIncidentFromWebhook(
 export async function resumeAfterHumanReview(
   threadId: string,
   humanApproval: "approved" | "rejected" | "escalated"
-): Promise<unknown> {
-  return rcaGraph.invoke(
-    { humanApproval },
-    { configurable: { thread_id: threadId } }
+): Promise<GraphStateType> {
+  const config = { configurable: { thread_id: threadId } }
+
+  // resume graph from where it was interrupted
+  await rcaGraph.updateState(
+    config, 
+    { humanApproval }, 
+    "finalize_remediation" // This ensures executionGatekeeper can read it seamlessly
   );
+
+  return rcaGraph.invoke(
+    null,
+    config
+  );
+}
+
+export async function sendNotiForHumanApproval( threadId: string, pauseState: GraphStateType): Promise<void>{
+  
+  // send proposed action with the notification
+
+  const {messages, ...notiData} = pauseState;
+  const channelId = process.env.SLACK_CHANNEL_ID ?? "testchannel";
+
+  await sendSlackIncidentAlert(channelId, threadId, notiData)
+  
 }
 
 async function main() {
@@ -90,7 +112,8 @@ async function main() {
   console.log("[agent] Paused before executionGatekeeper — awaiting humanApproval");
   console.log(JSON.stringify(paused, null, 2));
 
-  const resumed = await resumeAfterHumanReview(threadId, "approved");
+  const approval = "approved" /*await sendNotiForHumanApproval(threadId, paused);*/
+  const resumed = await resumeAfterHumanReview(threadId, approval);
   console.log("[agent] Workflow complete after human approval");
   console.log(JSON.stringify(resumed, null, 2));
 }
