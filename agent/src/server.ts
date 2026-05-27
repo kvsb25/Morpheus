@@ -43,28 +43,8 @@ app.post("/webhook/vmalert", async (req: Request, res: Response) => {
   });
 });
 
-app.post("/api/incidents/:threadId/resume", async (req: Request, res: Response) => {
-  const { threadId } = req.params;
-  const { humanApproval } = req.body as { humanApproval?: string };
-
-  if (
-    humanApproval !== "approved" &&
-    humanApproval !== "rejected" &&
-    humanApproval !== "escalated"
-  ) {
-    res.status(400).json({
-      error: 'humanApproval must be "approved", "rejected", or "escalated"',
-    });
-    return;
-  }
-
-  console.log(`[sre-agent] resuming thread=${threadId} humanApproval=${humanApproval}`);
-
-  const state = await resumeAfterHumanReview(threadId, humanApproval);
-  res.status(200).json({ status: "completed", threadId, state });
-});
-
 app.post("/api/slack/actions", async (req: Request, res: Response) => {
+  // set ngrok tunnel for dev purposes
   if (!req.body.payload) {
     return res.status(400).send("Missing payload");
   }
