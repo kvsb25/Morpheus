@@ -1,5 +1,6 @@
 # LTOV stack: Loki, Tempo, OpenTelemetry Collector, VictoriaMetrics (+ vmalert).
 # Victim Service exports OTLP only to the collector — never directly to backends.
+# sre-agent is awakened by Alertmanager when vmalert fires (event-driven).
 
 name: agentic-sre-ltov
 
@@ -52,6 +53,35 @@ services:
       - loki
     networks: [ltov]
 
+  sre-agent:
+    build:
+      context: ../agent
+      dockerfile: Dockerfile
+    container_name: sre-agent
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in monitoring/.env — see ../.env.example}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      TEMPO_URL: http://tempo:3200
+      LOKI_URL: http://loki:3100
+      VICTORIA_METRICS_URL: http://victoria-metrics:8428
+    ports:
+      - "8080:8080"
+    depends_on:
+      - victoria-metrics
+      - tempo
+      - loki
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    networks: [ltov]
+    restart: unless-stopped
+
   vmalert:
     image: victoriametrics/vmalert:v1.106.1
     command:
@@ -78,6 +108,9 @@ services:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "9093:9093"
+    depends_on:
+      sre-agent:
+        condition: service_healthy
     networks: [ltov]
 
   express-victim-service:
