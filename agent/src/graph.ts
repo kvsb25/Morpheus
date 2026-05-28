@@ -10,17 +10,14 @@ import {
   interpretationAgent,
   rcaReviewer,
   remediationAgent,
-  triageAgentWithTools,
 } from "./nodes/agentNodes.js";
 import { executionGatekeeper } from "./nodes/executionGatekeeper.js";
 import {
   analystTools,
   interpreterTools,
   remediationTools,
-  triageTools,
 } from "./tools/index.js";
 
-const triageToolNode = new ToolNode(triageTools);
 const analystToolNode = new ToolNode(analystTools);
 const interpreterToolNode = new ToolNode(interpreterTools);
 const remediationToolNode = new ToolNode(remediationTools);
@@ -78,8 +75,7 @@ export function routeAfterReviewer(
 }
 
 const workflow = new StateGraph(GraphState)
-  .addNode("triageAgent", triageAgentWithTools)
-  .addNode("triage_tools", triageToolNode)
+  // .addNode("triage_tools", triageToolNode)
   .addNode("deterministicAnalyst", deterministicAnalyst)
   .addNode("analyst_tools", analystToolNode)
   .addNode("finalize_deterministic", finalizeDeterministicAnalysis)
@@ -91,9 +87,9 @@ const workflow = new StateGraph(GraphState)
   .addNode("remediation_tools", remediationToolNode)
   .addNode("finalize_remediation", finalizeProposedAction)
   .addNode("executionGatekeeper", executionGatekeeper)
-  .addEdge(START, "triageAgent")
-  .addConditionalEdges("triageAgent", routeAfterTriage, ["triage_tools", "deterministicAnalyst"])
-  .addEdge("triage_tools", "triageAgent")
+  .addEdge(START, "deterministicAnalyst")
+  // .addConditionalEdges("triageAgent", routeAfterTriage, ["triage_tools", "deterministicAnalyst"])
+  // .addEdge("triage_tools", "triageAgent")
   .addConditionalEdges("deterministicAnalyst", routeAfterAnalyst, [
     "analyst_tools",
     "finalize_deterministic",

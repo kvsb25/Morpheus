@@ -1,37 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
-// --- Triage ---
-
-export const fetchAlertContext = tool(
-  async ({ alert_id }) => {
-    return JSON.stringify({
-      alert_id,
-      metric_name: "node_event_loop_utilization",
-      timestamp: new Date().toISOString(),
-      service_name: "express-victim-service",
-      severity: "critical",
-      trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
-      annotations: {
-        summary: "Critical event loop utilization",
-        agent_rca_hint:
-          "Look for CPU-intensive while loops on GET /api/fault/block-loop.",
-      },
-      labels: {
-        alertname: "EventLoopUtilizationCritical",
-        service_name: "express-victim-service",
-      },
-    });
-  },
-  {
-    name: "fetch_alert_context",
-    description: "Fetches the raw webhook payload for a given alert ID.",
-    schema: z.object({
-      alert_id: z.string(),
-    }),
-  }
-);
-
 // --- Deterministic analyst (Phase 1: the "How") ---
 
 export const queryTracesById = tool(
@@ -274,7 +243,6 @@ export const escalateToHumanPager = tool(
   }
 );
 
-export const triageTools = [fetchAlertContext];
 export const analystTools = [queryTracesById, queryLogsByTrace, queryMetrics];
 export const interpreterTools = [fetchRepoContext, fetchDeploymentHistory];
 export const remediationTools = [searchRunbooks, checkCurrentCapabilities];

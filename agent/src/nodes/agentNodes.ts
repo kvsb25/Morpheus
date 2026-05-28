@@ -36,13 +36,14 @@ function buildContextMessage(state: GraphStateType): string {
   ].join("\n");
 }
 
-async function invokeAgent(
+async function invokeLLM(
   systemPrompt: string,
   tools: StructuredToolInterface[],
   state: GraphStateType,
   extraHuman?: string
 ): Promise<Partial<GraphStateType>> {
-  const model = createModel().bindTools(tools);
+  const baseModel = createModel();
+  const model = tools.length > 0 ? baseModel.bindTools(tools) : baseModel;
   const humanContent = extraHuman ?? buildContextMessage(state);
   const response = await model.invoke([
     new SystemMessage(systemPrompt),
@@ -52,28 +53,11 @@ async function invokeAgent(
   return { messages: [response] };
 }
 
-export async function triageAgentWithTools(state: GraphStateType): Promise<Partial<GraphStateType>> {
-  const { triageTools } = await import("../tools/index.js");
-  const alertHint =
-    state.incident?.alertId ??
-    "Use fetch_alert_context with the alert_id from the incoming webhook payload.";
-  const result = await invokeAgent(
-    TRIAGE_SYSTEM_PROMPT,
-    triageTools,
-    state,
-    `Incoming vmalert webhook. Call fetch_alert_context for alert_id=${alertHint}\n${buildContextMessage(state)}`
-  );
-  const messages = [...state.messages, ...(result.messages ?? [])];
-  const traceId = extractTraceIdFromMessages(messages) ?? state.traceId;
-  const incident = extractIncidentFromMessages(messages) ?? state.incident;
-  return { ...result, traceId, incident };
-}
-
 export async function deterministicAnalyst(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
   const { analystTools } = await import("../tools/index.js");
-  const result = await invokeAgent(
+  const result = await invokeLLM(
     DETERMINISTIC_ANALYST_SYSTEM_PROMPT,
     analystTools,
     state,
@@ -100,7 +84,7 @@ export async function interpretationAgent(
   const feedbackNote = state.reviewFeedback
     ? `\nReviewer feedback to address:\n${state.reviewFeedback}`
     : "";
-  const result = await invokeAgent(
+  const result = await invokeLLM(
     INTERPRETATION_SYSTEM_PROMPT,
     interpreterTools,
     state,
@@ -149,7 +133,7 @@ export async function rcaReviewer(state: GraphStateType): Promise<Partial<GraphS
 
 export async function remediationAgent(state: GraphStateType): Promise<Partial<GraphStateType>> {
   const { remediationTools } = await import("../tools/index.js");
-  const result = await invokeAgent(
+  const result = await invokeLLM(
     REMEDIATION_SYSTEM_PROMPT,
     remediationTools,
     state,
