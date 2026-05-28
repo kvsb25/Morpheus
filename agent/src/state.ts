@@ -3,6 +3,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 
 export type Incident = {
   alertId: string;
+  alertName: string;
   metricName: string;
   timestamp: string;
 };

@@ -27,7 +27,8 @@ export async function runIncidentFromWebhook(
 ): Promise<GraphStateType> {
   const alert = payload.alerts?.[0];
   const alertId = alert?.fingerprint ?? alert?.labels?.alertname ?? "unknown-alert";
-  const metricName = alert?.labels?.metric_name ?? alert?.labels?.alertname ?? "unknown-metric";
+  const metricName = alert?.labels?.metric_name ?? "unknown-metric";
+  const alertName = alert?.labels?.alertname ?? "unknown-alertname";
   const timestamp = alert?.startsAt ?? new Date().toISOString();
   const traceId = await getTraceIdFromAlert(alert);
 
@@ -38,6 +39,7 @@ export async function runIncidentFromWebhook(
           JSON.stringify({
             source: "vmalert",
             alertId,
+            alertName,
             metricName,
             timestamp,
             labels: alert?.labels ?? {},
@@ -45,7 +47,7 @@ export async function runIncidentFromWebhook(
           })
         ),
       ],
-      incident: { alertId, metricName, timestamp },
+      incident: { alertId, alertName, metricName, timestamp },
       traceId,
     },
     { configurable: { thread_id: threadId } }
@@ -76,9 +78,8 @@ export async function resumeAfterHumanReview(
   );
 }
 
+// send proposed action with the notification
 export async function sendNotiForHumanApproval( threadId: string, pauseState: GraphStateType): Promise<void>{
-  
-  // send proposed action with the notification
 
   const {messages, ...notiData} = pauseState;
   const channelId = process.env.SLACK_CHANNEL_ID ?? "testchannel";

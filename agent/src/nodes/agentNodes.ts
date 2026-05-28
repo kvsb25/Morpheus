@@ -7,7 +7,6 @@ import {
   INTERPRETATION_SYSTEM_PROMPT,
   RCA_REVIEWER_SYSTEM_PROMPT,
   REMEDIATION_SYSTEM_PROMPT,
-  TRIAGE_SYSTEM_PROMPT,
 } from "./prompts.js";
 import {
   extractIncidentFromMessages,
@@ -42,26 +41,46 @@ async function invokeLLM(
   state: GraphStateType,
   extraHuman?: string
 ): Promise<Partial<GraphStateType>> {
+
   const baseModel = createModel();
   const model = tools.length > 0 ? baseModel.bindTools(tools) : baseModel;
   const humanContent = extraHuman ?? buildContextMessage(state);
+  const fullSystemPrompt = `${systemPrompt}\n\n### CURRENT TASK CONTEXT:\n${humanContent}`;
+  
   const response = await model.invoke([
-    new SystemMessage(systemPrompt),
+    new SystemMessage(fullSystemPrompt),
     ...state.messages,
-    new HumanMessage(humanContent),
   ]);
-  return { messages: [response] };
+  return { messages: [new AIMessage(response)] };
 }
 
 export async function deterministicAnalyst(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
+
   const { analystTools } = await import("../tools/index.js");
+  
+  const invocationPrompt = `Execute Phase 1: Deterministic Analysis.
+
+    Incident Context:
+    - Alert ID: ${state.incident?.alertId}
+    - Alert Name: ${state.incident?.alertName}
+    - Metric Name: ${state.incident?.metricName}
+    - Timestamp: ${state.incident?.timestamp}
+    - Trace ID: ${state.traceId}
+
+    Directive:
+    1. Use your tools to query telemetry (logs, metrics, traces) anchored around the provided timestamp and Trace ID.
+    2. Trace the state changes backward from the alert trigger to the lowest-level technical fault.
+    3. Output a step-by-step mechanical failure chain.
+
+  Stop exactly there. Do not interpret the "why" or propose fixes.`
+
   const result = await invokeLLM(
     DETERMINISTIC_ANALYST_SYSTEM_PROMPT,
     analystTools,
     state,
-    `Phase 1 RCA — traceId=${state.traceId}. Query telemetry and produce a mechanical failure chain only.`
+    invocationPrompt
   );
   return result;
 }

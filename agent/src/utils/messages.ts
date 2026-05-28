@@ -10,6 +10,16 @@ export function getLastAiMessageContent(messages: BaseMessage[]): string {
   return "";
 }
 
+export function getLastAiMessage(messages: BaseMessage[]): AIMessage | null{
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg instanceof AIMessage) {
+      return msg;
+    }
+  }
+  return null;
+}
+
 export function hasPendingToolCalls(messages: BaseMessage[]): boolean {
   const last = messages[messages.length - 1];
   return last instanceof AIMessage && Boolean(last.tool_calls?.length);

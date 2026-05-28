@@ -22,10 +22,6 @@ const analystToolNode = new ToolNode(analystTools);
 const interpreterToolNode = new ToolNode(interpreterTools);
 const remediationToolNode = new ToolNode(remediationTools);
 
-function routeAfterTriage(state: GraphStateType): "triage_tools" | "deterministicAnalyst" {
-  return hasPendingToolCalls(state.messages) ? "triage_tools" : "deterministicAnalyst";
-}
-
 function routeAfterAnalyst(state: GraphStateType): "analyst_tools" | "finalize_deterministic" {
   return hasPendingToolCalls(state.messages) ? "analyst_tools" : "finalize_deterministic";
 }
