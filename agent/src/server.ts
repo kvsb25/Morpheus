@@ -28,6 +28,7 @@ app.get("/health", (_req: Request, res: Response) => {
 
 app.post("/webhook/vmalert", async (req: Request, res: Response) => {
   const payload = req.body as VmalertWebhookPayload;
+  // safely access alert props by payload.alerts[0]
   const threadId = threadIdFromPayload(payload);
 
   console.log(`[sre-agent] vmalert webhook received (thread=${threadId})`);
@@ -43,8 +44,8 @@ app.post("/webhook/vmalert", async (req: Request, res: Response) => {
   });
 });
 
+// set ngrok tunnel for dev purposes
 app.post("/api/slack/actions", async (req: Request, res: Response) => {
-  // set ngrok tunnel for dev purposes
   if (!req.body.payload) {
     return res.status(400).send("Missing payload");
   }

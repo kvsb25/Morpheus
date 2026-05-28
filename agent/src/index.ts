@@ -29,6 +29,7 @@ export async function runIncidentFromWebhook(
   const alertId = alert?.fingerprint ?? alert?.labels?.alertname ?? "unknown-alert";
   const metricName = alert?.labels?.metric_name ?? alert?.labels?.alertname ?? "unknown-metric";
   const timestamp = alert?.startsAt ?? new Date().toISOString();
+  const traceId = await getTraceIdFromAlert(alert);
 
   const initial = await rcaGraph.invoke(
     {
@@ -45,6 +46,7 @@ export async function runIncidentFromWebhook(
         ),
       ],
       incident: { alertId, metricName, timestamp },
+      traceId,
     },
     { configurable: { thread_id: threadId } }
   );
@@ -83,6 +85,39 @@ export async function sendNotiForHumanApproval( threadId: string, pauseState: Gr
 
   await sendSlackIncidentAlert(channelId, threadId, notiData)
   
+}
+
+type Alert = { fingerprint?: string | undefined; labels?: Record<string, string> | undefined; annotations?: Record<string, string> | undefined; startsAt?: string | undefined; } | undefined; 
+// get traceId from VictoriaMetrics exemplar API using alert labels
+async function getTraceIdFromAlert(alert: Alert): Promise<string | null> {
+  
+  const metricName = alert?.labels?.metric_name;
+  const serviceName = alert?.labels?.service_name;
+  
+  if (!metricName) {
+    console.log("No metric_name label on this alert. Cannot query exemplars.");
+    return null;
+  }
+
+  const query = `${metricName}{service_name="${serviceName}"}`;
+
+  const end = String(Math.floor(Date.now() / 1000));
+  const start = String(Math.floor(new Date(alert?.startsAt as string).getTime() / 1000) - 60); // 1 min before it fired
+
+  const params = new URLSearchParams({ query, start, end });
+
+  // 4. Fetch from VictoriaMetrics
+  const response = await fetch(`${process.env.VICTORIA_METRICS_URL}/api/v1/query_exemplars?${params}`);
+  const json = await response.json();
+
+  for (const series of (json.data || [])) {
+    for (const exemplar of series.exemplars) {
+      if (exemplar.labels && exemplar.labels.trace_id) {
+        return exemplar.labels.trace_id;
+      }
+    }
+  }
+  return null;
 }
 
 async function main() {
