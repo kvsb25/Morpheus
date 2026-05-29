@@ -18,9 +18,9 @@ import {
   remediationTools,
 } from "./tools/index.js";
 
-const analystToolNode = new ToolNode(analystTools);
-const interpreterToolNode = new ToolNode(interpreterTools);
-const remediationToolNode = new ToolNode(remediationTools);
+const analystToolNode = new ToolNode(analystTools, {handleToolErrors: true});
+const interpreterToolNode = new ToolNode(interpreterTools, {handleToolErrors: true});
+const remediationToolNode = new ToolNode(remediationTools, {handleToolErrors: true});
 
 function routeAfterAnalyst(state: GraphStateType): "analyst_tools" | "finalize_deterministic" {
   return hasPendingToolCalls(state.messages) ? "analyst_tools" : "finalize_deterministic";

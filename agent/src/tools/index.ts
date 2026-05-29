@@ -5,32 +5,21 @@ import { z } from "zod";
 
 export const queryTracesById = tool(
   async ({ trace_id }) => {
-    return JSON.stringify({
-      trace_id,
-      root_span: "POST /api/fault/db-crash",
-      spans: [
-        {
-          name: "POST /api/fault/db-crash",
-          duration_ms: 312,
-          status: "ERROR",
-          http_status_code: 500,
-        },
-        {
-          name: "db.query_execution",
-          duration_ms: 268,
-          status: "ERROR",
-          attributes: {
-            "db.statement": "SELECT * FROM users WHERE email = $1 FOR UPDATE NOWAIT",
-            "db.system": "postgresql",
-            "http.request.body.sanitized": '{"queryHint":"pool exhausted"}',
-            "process.memory.rss.bytes": 89456640,
-          },
-          exception: "Simulated PostgreSQL failure: pool exhausted",
-        },
-      ],
-      mechanical_chain:
-        "HTTP 500 -> db.query_execution span ERROR -> simulated pool exhaustion after 250ms wait",
-    });
+    const tempoUrl = process.env.TEMPO_URL;
+
+    const response = await fetch(`${tempoUrl}/api/traces/${trace_id}`);
+
+    if (response.status === 404) {
+      console.log(`Trace ${trace_id} not found in Tempo.`);
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Tempo API error: ${response.status} ${response.statusText}`);
+    }
+
+    const traceData = await response.json();
+    return traceData;
   },
   {
     name: "query_traces_by_id",
@@ -43,21 +32,50 @@ export const queryTracesById = tool(
 );
 
 export const queryLogsByTrace = tool(
-  async ({ trace_id }) => {
-    return JSON.stringify({
-      trace_id,
-      logs: [
-        {
-          timestamp: "2026-05-23T12:00:02.123Z",
-          level: "error",
-          message: "Database query connection timeout pool exhausted",
-          trace_id,
-          span_id: "00f067aa0ba902b7",
-          "service.name": "express-victim-service",
-          component: "database-pool",
-        },
-      ],
+  async ({ trace_id, alertStartTimeMs }) => {
+
+    const lokiUrl = process.env.LOKI_URL;
+
+    // LogQL: Look in your service, parse the JSON, and match the trace_id
+    // Can set service name as variable for multiple services and let the LLM decide the service
+    const query = `{service_name="express-victim-service"} | json | trace_id="${trace_id}"`;
+
+    // Define a time window (e.g., 5 minutes before and after the alert)
+    // Loki requires timestamps in nanoseconds!
+    const startNano = ((alertStartTimeMs - 300000) * 1000000); 
+    const endNano = (Date.now() * 1000000);
+
+    const params = new URLSearchParams({
+      query: query,
+      start: startNano.toString(),
+      end: endNano.toString(),
+      limit: "500" // Max number of logs to return
     });
+
+    const response = await fetch(`${lokiUrl}/loki/api/v1/query_range?${params}`);
+    
+    if (!response.ok) {
+      throw new Error(`Loki API error: ${response.status} ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    
+    if (json.status !== "success" || !json.data.result || json.data.result.length === 0) {
+      console.log(`No logs found for trace_id: ${trace_id}`);
+      return [];
+    }
+
+    // Extract and format the log lines
+    const logs: any[] = [];
+    json.data.result.forEach((stream: {values: any[][]}) => {
+      stream.values.forEach(value => {
+        // value[0] is the nanosecond timestamp, value[1] is the log line string
+        const logLine = JSON.parse(value[1]); 
+        logs.push(logLine);
+      });
+    });
+
+    return logs;
   },
   {
     name: "query_logs_by_trace",
@@ -65,30 +83,66 @@ export const queryLogsByTrace = tool(
       "Returns all application logs from Loki injected with this specific trace context.",
     schema: z.object({
       trace_id: z.string(),
+      alertStartTimeMs: z.number(),
     }),
   }
 );
 
 export const queryMetrics = tool(
-  async ({ metric_name, timeframe_minutes }) => {
-    return JSON.stringify({
-      metric_name,
-      timeframe_minutes,
-      samples: [
-        { ts: "2026-05-23T11:58:00Z", value: 0.42 },
-        { ts: "2026-05-23T11:59:00Z", value: 0.78 },
-        { ts: "2026-05-23T12:00:00Z", value: 0.94 },
-      ],
-      promql_hint: `max_over_time(${metric_name}{service_name="express-victim-service"}[${timeframe_minutes}m])`,
-      anomaly: "ELU spike correlates with synchronous event-loop blocking or DB fault burst",
-    });
+  async ({ metric_names, timeframe_minutes }) => {
+    const vmUrl = process.env.VICTORIA_METRICS_URL;
+    const serviceName = "express-victim-service";
+
+    // Build optimized PromQL query string
+    let query = `{service_name="${serviceName}"}`;
+    if (metric_names && metric_names.length > 0) {
+      // Uses PromQL regex matching to filter multiple metrics efficiently in one network call
+      // Example: {service_name="express-victim-service", __name__=~"process_open_fds|node_event_loop_utilization"}
+      const metricRegex = metric_names.join("|");
+      query = `{service_name="${serviceName}", __name__=~"${metricRegex}"}`;
+    }
+
+    // Determine whether to hit the instant query or range query endpoint based on timeframe
+    const isRangeQuery = typeof timeframe_minutes === "number" && timeframe_minutes > 0;
+    const endpoint = isRangeQuery ? "/api/v1/query_range" : "/api/v1/query";
+    
+    const params = new URLSearchParams({ query });
+
+    if (isRangeQuery && timeframe_minutes) {
+      const nowInSeconds = Math.floor(Date.now() / 1000);
+      const startInSeconds = nowInSeconds - (timeframe_minutes * 60);
+      
+      params.append("start", startInSeconds.toString());
+      params.append("end", nowInSeconds.toString());
+      params.append("step", "30s");
+    }
+
+    const response = await fetch(`${vmUrl}${endpoint}?${params}`);
+    if (!response.ok) {
+      throw new Error(`VictoriaMetrics HTTP error: ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    if (json.status !== "success" || !json.data || !json.data.result) {
+      return { totalFound: 0, results: [] };
+    }
+
+    // 3. Sort results alphabetically by metric name
+    const processedResults = json.data.result.sort((a:{metric:{__name__:string}}, b:{metric:{__name__:string}}) =>
+      a.metric.__name__.localeCompare(b.metric.__name__)
+    );
+
+    return {
+      totalFound: processedResults.length,
+      results: processedResults
+    };
   },
   {
     name: "query_metrics",
     description:
       "Queries VictoriaMetrics via PromQL for infrastructure anomalies around the incident time.",
     schema: z.object({
-      metric_name: z.string(),
+      metric_names: z.array(z.string()),
       timeframe_minutes: z.number(),
     }),
   }
