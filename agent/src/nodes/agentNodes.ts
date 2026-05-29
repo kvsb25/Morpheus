@@ -59,6 +59,10 @@ export async function deterministicAnalyst(
 ): Promise<Partial<GraphStateType>> {
 
   const { analystTools } = await import("../tools/index.js");
+
+  const feedbackNote = state.reviewFeedback
+    ? `\n### ⚠️ Human Reviewer Feedback\n${state.reviewFeedback}\n\n*Directive: You MUST incorporate this feedback to correct or refine your previous hypothesis.*`
+    : "";
   
   const invocationPrompt = `Execute Phase 1: Deterministic Analysis.
 
@@ -68,11 +72,13 @@ export async function deterministicAnalyst(
     - Metric Name: ${state.incident?.metricName}
     - Timestamp: ${state.incident?.timestamp}
     - Trace ID: ${state.traceId}
-
+    
     Directive:
     1. Use your tools to query telemetry (logs, metrics, traces) anchored around the provided timestamp and Trace ID.
     2. Trace the state changes backward from the alert trigger to the lowest-level technical fault.
     3. Output a step-by-step mechanical failure chain.
+    
+    ${feedbackNote}
 
   Stop exactly there. Do not interpret the "why" or propose fixes.`
 
@@ -99,18 +105,38 @@ export async function finalizeDeterministicAnalysis(
 export async function interpretationAgent(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
+
   const { interpreterTools } = await import("../tools/index.js");
-  const feedbackNote = state.reviewFeedback
-    ? `\nReviewer feedback to address:\n${state.reviewFeedback}`
+  
+  const incidentContext = state.incident 
+    ? `\n### Incident Context\n- Alert ID: ${state.incident.alertId}\n- Metric: ${state.incident.metricName}\n- Timestamp: ${state.incident.timestamp}\n` 
     : "";
+
+  const feedbackNote = state.reviewFeedback
+    ? `\n### ⚠️ Human Reviewer Feedback\n${state.reviewFeedback}\n\n*Directive: You MUST incorporate this feedback to correct or refine your previous hypothesis.*`
+    : "";
+
+  const invocationPrompt = `
+    Initiating Phase 2 RCA: Systemic Interpretation.
+
+    ### Phase 1: Deterministic Analysis (The "How")
+    The Deterministic Analyst has established the following mechanical root cause. Accept this as objective fact:
+    ${state.deterministicAnalysis}
+    ${incidentContext}${feedbackNote}
+    ### Task
+    Using your tools, query the repository and deployment history to uncover the systemic "Why" behind this failure. Output your final synthesis clearly divided into **Code-Level Root Cause** and **Process-Level Root Cause**.
+  `.trim();
+  
   const result = await invokeLLM(
     INTERPRETATION_SYSTEM_PROMPT,
     interpreterTools,
     state,
-    `Phase 2 RCA — interpret the deterministic analysis.\n${state.deterministicAnalysis}${feedbackNote}`
+    invocationPrompt
   );
+  
   return result;
 }
+// Some changes are made in the graph flow (which are minute) and they will be visible from the old invocation prompt above make sure while forming the prompt remember those also
 
 export async function finalizeInterpretation(
   state: GraphStateType
