@@ -1,5 +1,7 @@
 import { tool } from "@langchain/core/tools";
+import { Command } from "@langchain/langgraph/web";
 import { z } from "zod";
+import { OTLPEvent } from "../state.js";
 
 // --- Deterministic analyst (Phase 1: the "How") ---
 
@@ -19,7 +21,34 @@ export const queryTracesById = tool(
     }
 
     const traceData = await response.json();
-    return traceData;
+
+    const traceEvents: OTLPEvent[] = []
+
+    for (const batch of traceData.batches) {
+      for (const scopeSpan of batch.scopeSpans) {
+        for (const span of scopeSpan.spans) {
+          
+          // If the span has events, push them to our flat array
+          if (span.events && span.events.length > 0) {
+            traceEvents.push(...span.events);
+          }
+          
+        }
+      }
+    }
+
+    // return traceData;
+    return new Command({
+      update:{
+        traceEvents,
+        messages: [
+          {
+            role: "tool",
+            content: JSON.stringify(traceData),
+          }
+        ]
+      }
+    })
   },
   {
     name: "query_traces_by_id",
@@ -163,7 +192,7 @@ export const fetchRepoContext = tool(
   {
     name: "fetch_repo_context",
     description:
-      "Fetches source code snippets from GitHub based on file paths in the stack trace.",
+      "Fetches source code snippets from GitHub based on file paths in the stack trace (traceEvents).",
     schema: z.object({
       file_path: z.string(),
       function_name: z.string().optional(),

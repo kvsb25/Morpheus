@@ -16,6 +16,19 @@ export type ProposedAction = {
 
 export type HumanApproval = "pending" | "approved" | "rejected" | "escalated";
 
+export type OTLPEvent = {
+  timeUnixNano: string;
+  name: string;
+  attributes: {
+    key: string;
+    value: {
+      stringValue?: string;
+      intValue?: number;
+      boolValue?: boolean;
+    };
+  }[];
+}
+
 /** Last-write-wins reducer for scalar state fields updated by agent nodes. */
 function lastValue<T>(_: T, update: T): T {
   return update;
@@ -31,6 +44,10 @@ export const GraphState = Annotation.Root({
     default: () => null,
   }),
   traceId: Annotation<string | null>({
+    reducer: lastValue,
+    default: () => null,
+  }),
+  traceEvents: Annotation<OTLPEvent[] | null>({
     reducer: lastValue,
     default: () => null,
   }),
