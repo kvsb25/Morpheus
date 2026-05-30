@@ -1,5 +1,6 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
+import {RCA_REVIEWER_OUTPUT_SCHEMA} from "../utils/outputSchemas.js";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { GraphStateType } from "../state.js";
 import {
@@ -61,7 +62,7 @@ export async function deterministicAnalyst(
   const { analystTools } = await import("../tools/index.js");
 
   const feedbackNote = state.reviewFeedback
-    ? `\n### ⚠️ Human Reviewer Feedback\n${state.reviewFeedback}\n\n*Directive: You MUST incorporate this feedback to correct or refine your previous hypothesis.*`
+    ? `\n### ⚠️ Reviewer Feedback\n${state.reviewFeedback.logicalLeap ?? null}\n${state.reviewFeedback.requiredCorrection?.forDeterministicAnalyst ?? null}\n\n*Directive: You MUST incorporate this feedback to correct or refine your previous hypothesis.*`
     : "";
   
   const invocationPrompt = `Execute Phase 1: Deterministic Analysis.
@@ -113,7 +114,7 @@ export async function interpretationAgent(
     : "";
 
   const feedbackNote = state.reviewFeedback
-    ? `\n### ⚠️ Human Reviewer Feedback\n${state.reviewFeedback}\n\n*Directive: You MUST incorporate this feedback to correct or refine your previous hypothesis.*`
+    ? `\n### ⚠️ Reviewer Feedback\n${state.reviewFeedback.logicalLeap ?? null}\n${state.reviewFeedback.requiredCorrection?.forInterpretationAgent ?? null}\n\n*Directive: You MUST incorporate this feedback to correct or refine your previous hypothesis.*\n`
     : "";
 
   const invocationPrompt = `
@@ -150,7 +151,8 @@ export async function finalizeInterpretation(
 }
 
 export async function rcaReviewer(state: GraphStateType): Promise<Partial<GraphStateType>> {
-  const model = createModel();
+  const baseModel = createModel();
+  const model = baseModel.withStructuredOutput(RCA_REVIEWER_OUTPUT_SCHEMA)
   const response = await model.invoke([
     new SystemMessage(RCA_REVIEWER_SYSTEM_PROMPT),
     new HumanMessage(
@@ -166,12 +168,9 @@ export async function rcaReviewer(state: GraphStateType): Promise<Partial<GraphS
     ),
   ]);
 
-  const feedback =
-    typeof response.content === "string" ? response.content : JSON.stringify(response.content);
-
   return {
-    messages: [response as AIMessage],
-    reviewFeedback: feedback,
+    messages: [new AIMessage(String(response.logicalLeap))],
+    reviewFeedback: response,
     revisionCount: state.revisionCount + 1,
   };
 }

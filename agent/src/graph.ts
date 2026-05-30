@@ -61,13 +61,14 @@ function needsFreshTelemetry(feedback: string | null): boolean {
 export function routeAfterReviewer(
   state: GraphStateType
 ): "remediationAgent" | "interpretationAgent" | "deterministicAnalyst" {
-  if (isReviewApproved(state.reviewFeedback) || state.revisionCount >= 3) {
-    return "remediationAgent";
+
+  const feedback = state.reviewFeedback;
+
+  if(feedback?.status === "REJECTED"){
+    return feedback.targetNode ? feedback.targetNode : "interpretationAgent";
   }
-  if (needsFreshTelemetry(state.reviewFeedback)) {
-    return "deterministicAnalyst";
-  }
-  return "interpretationAgent";
+
+  return "remediationAgent";
 }
 
 const workflow = new StateGraph(GraphState)
