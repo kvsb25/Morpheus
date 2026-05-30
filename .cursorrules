@@ -43,7 +43,7 @@ Agent nodes strictly enforce the principle of least privilege. Do not allow an a
 <br>`query_metrics`: `{ metric_name: z.string(), timeframe_minutes: z.number() }` |
 | **`interpretationAgent`** | Phase 2 RCA. Query repo/deployments for systemic context. | `fetch_repo_context`: `{ file_path: z.string(), function_name: z.string().optional() }`<br>
 
-<br>`fetch_deployment_history`: `{ timestamp_iso: z.string() }` |
+<br>`fetch_commit_history_since`: `{ timestamp_iso: z.string() }` |
 | **`remediationAgent`** | Formulate mitigation plan and script parameters. | `search_runbooks`: `{ fault_keyword: z.string() }`<br>
 
 <br>`check_current_capabilities`: `{ }` |

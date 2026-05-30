@@ -180,48 +180,54 @@ export const queryMetrics = tool(
 // --- Interpretation (Phase 2: the "Why") ---
 
 export const fetchRepoContext = tool(
-  async ({ file_path, function_name }) => {
-    return JSON.stringify({
-      file_path,
-      function_name: function_name ?? "simulateDbFailure",
-      snippet: `// victim-service/index.js — simulated failure path\nreject(new Error(\`Simulated PostgreSQL failure: \${hint}\`));`,
-      interpretation_hint:
-        "Fault-injection endpoint intentionally rejects DB operations; not a production schema bug.",
+  async ({ file_path }) => {
+    const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/contents/${file_path}`, {
+      headers: { 'Accept': 'application/vnd.github.v3.raw' }
     });
+    if (!response.ok) throw new Error(response.statusText);
+    return response.text();
   },
   {
     name: "fetch_repo_context",
     description:
-      "Fetches source code snippets from GitHub based on file paths in the stack trace (traceEvents).",
+      "Fetches source code from GitHub based on file paths in the stack trace (traceEvents).",
     schema: z.object({
       file_path: z.string(),
-      function_name: z.string().optional(),
     }),
   }
 );
 
-export const fetchDeploymentHistory = tool(
+export const fetchCommitHistorySince = tool(
   async ({ timestamp_iso }) => {
-    return JSON.stringify({
-      timestamp_iso,
-      deployments: [
-        {
-          id: "deploy-8821",
-          service: "express-victim-service",
-          version: "1.0.0",
-          deployed_at: "2026-05-23T11:45:00Z",
-          changed_files: ["victim-service/index.js", "victim-service/telemetry.js"],
-        },
-      ],
-      config_changes: [],
-    });
+    const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/commits?since=${encodeURIComponent(timestamp_iso)}`);
+    if (!response.ok) throw new Error(response.statusText);
+    return response.json();
   },
   {
-    name: "fetch_deployment_history",
+    name: "fetch_commit_history_since",
     description:
-      "Checks CI/CD for deployments or config changes immediately preceding the incident.",
+      "Fetches the commit history of a GitHub repository starting from a specific timestamp.",
     schema: z.object({
       timestamp_iso: z.string(),
+    }),
+  }
+);
+
+export const fetchFileFromCommit = tool(
+  async ({ commit_sha, file_path }) => {
+    const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/contents/${file_path}?ref=${commit_sha}`, {
+      headers: { 'Accept': 'application/vnd.github.v3.raw' }
+    });
+    if (!response.ok) throw new Error(response.statusText);
+    return response.text();
+  },
+  {
+    name: "fetch_file_from_commit",
+    description:
+      "Fetches a specific file from a given commit in the GitHub repository.",
+    schema: z.object({
+      commit_sha: z.string(),
+      file_path: z.string(),
     }),
   }
 );
@@ -327,6 +333,6 @@ export const escalateToHumanPager = tool(
 );
 
 export const analystTools = [queryTracesById, queryLogsByTrace, queryMetrics];
-export const interpreterTools = [fetchRepoContext, fetchDeploymentHistory];
+export const interpreterTools = [fetchRepoContext, fetchCommitHistorySince, fetchFileFromCommit];
 export const remediationTools = [searchRunbooks, checkCurrentCapabilities];
 export const gatekeeperTools = [executeSafeScript, escalateToHumanPager];

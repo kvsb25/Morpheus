@@ -69,6 +69,8 @@ services:
       TEMPO_URL: http://tempo:3200
       LOKI_URL: http://loki:3100
       VICTORIA_METRICS_URL: http://victoria-metrics:8428
+      GITHUB_OWNER: kvsb25
+      GITHUB_REPO: Morpheus
     ports:
       - "8080:8080"
     depends_on:
