@@ -29,6 +29,16 @@ export type OTLPEvent = {
   }[];
 }
 
+export type RCAFeedback = {
+  status: "APPROVED" | "REJECTED";
+  targetNode: "interpretationAgent" | "deterministicAnalyst" | "remediationAgent";
+  requiredCorrection?: {
+      forDeterministicAnalyst?: string | undefined;
+      forInterpretationAgent?: string | undefined;
+  } | undefined;
+  logicalLeap?: string | undefined;
+}
+
 /** Last-write-wins reducer for scalar state fields updated by agent nodes. */
 function lastValue<T>(_: T, update: T): T {
   return update;
@@ -59,7 +69,7 @@ export const GraphState = Annotation.Root({
     reducer: lastValue,
     default: () => null,
   }),
-  reviewFeedback: Annotation<string | null>({
+  reviewFeedback: Annotation<RCAFeedback | null>({
     reducer: lastValue,
     default: () => null,
   }),
