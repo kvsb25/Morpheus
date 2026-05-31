@@ -1,0 +1,125 @@
+## 1. Event Loop Exhaustion (Block Loop)
+
+**Fault Keywords:** `event loop`, `blocked`, `high cpu`, `node_event_loop_utilization`, `synchronous execution`
+
+### **Incident Context & Signatures**
+
+* **Mechanism:** A synchronous execution (busy-spin `while` loop) is locking the Node.js main thread, preventing it from processing asynchronous callbacks, incoming HTTP requests, or I/O operations.
+* **Telemetry Signatures:**
+* **Metrics:** `node_event_loop_utilization` spikes near `1.0`.
+* **Logs:** `level=warn`, `component="event-loop"`, `message="Fault injection: blocking event loop synchronously"`.
+
+
+* **Remediation Strategy:** The immediate mitigation is to horizontally scale the service to distribute incoming traffic while the blocked containers recover, or to restart the affected container to forcefully break the synchronous loop.
+
+### **Executable State Payload**
+
+```json
+{
+  "scriptName": "scale_docker_compose_service.sh",
+  "script": "docker compose -f $COMPOSE_FILE_PATH up --scale $SERVICE_NAME=$TARGET_INSTANCES -d",
+  "params": {
+    "COMPOSE_FILE_PATH": "docker-compose.yml",
+    "SERVICE_NAME": "express-victim-service",
+    "TARGET_INSTANCES": 3
+  },
+  "reasoning": "The Node.js event loop is blocked by a synchronous process. Scaling the service horizontally via Docker Compose will route new incoming traffic to fresh, unblocked instances while the current instance resolves its execution cycle."
+}
+
+```
+
+---
+
+## 2. Database Connection Pool Exhaustion (DB Crash)
+
+**Fault Keywords:** `db crash`, `database timeout`, `pool exhausted`, `PostgreSQL`, `db.query_execution`
+
+### **Incident Context & Signatures**
+
+* **Mechanism:** The application is failing to acquire database connections because the underlying pool is exhausted, leading to timeouts on SQL queries (e.g., `SELECT ... FOR UPDATE NOWAIT`).
+* **Telemetry Signatures:**
+* **Metrics:** Spike in 500 HTTP errors on `/api/fault/db-crash`.
+* **Traces:** Span `db.query_execution` marked with `SpanStatusCode.ERROR` and `db.system: "postgresql"`.
+* **Logs:** `level=error`, `component="database-pool"`, `message="Database query connection timeout pool exhausted"`.
+
+
+* **Remediation Strategy:**
+Terminate stalled or sleeping connections directly on the PostgreSQL database to instantly free up the connection pool for the Express service.
+
+### **Executable State Payload**
+
+```json
+{
+  "scriptName": "flush_pg_connections.sh",
+  "script": "docker exec $DB_CONTAINER_NAME psql -U $DB_USER -d $DB_NAME -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid();\"",
+  "params": {
+    "DB_CONTAINER_NAME": "postgres-db",
+    "DB_USER": "postgres",
+    "DB_NAME": "app_database"
+  },
+  "reasoning": "Distributed traces indicate PostgreSQL connection pool exhaustion. Executing pg_terminate_backend cleans up orphaned or stalled connections, immediately restoring database availability to the Express service without restarting the app."
+}
+
+```
+
+---
+
+## 3. V8 Heap Memory Leak
+
+**Fault Keywords:** `memory leak`, `OOM`, `heap size`, `old_space`, `nodejs_v8_heap_space_size_bytes`
+
+### **Incident Context & Signatures**
+
+* **Mechanism:** Data chunks are being appended to a global array (`memoryLeakStore`) without ever being garbage collected, causing an unbounded increase in the V8 engine's heap size (specifically in `old_space`).
+* **Telemetry Signatures:**
+* **Metrics:** Linear upward trend in `nodejs_v8_heap_space_size_bytes{space='old_space'}`.
+* **Logs:** `level=warn`, `component="memory"`, `message="Fault injection: retaining heap chunk in global store"`.
+
+
+* **Remediation Strategy:**
+Stateless Node.js applications suffering from acute memory leaks must be restarted to flush the heap and avoid an abrupt Out of Memory (OOM) crash that drops active connections ungracefully.
+
+### **Executable State Payload**
+
+```json
+{
+  "scriptName": "restart_docker_container.sh",
+  "script": "docker restart $CONTAINER_NAME",
+  "params": {
+    "CONTAINER_NAME": "express-victim-service"
+  },
+  "reasoning": "VictoriaMetrics shows a critical accumulation in V8 old_space heap memory. Restarting the Docker container is the safest deterministic mitigation to clear the memory space before an uncontrolled OOM kill occurs."
+}
+
+```
+
+---
+
+## 4. File Descriptor (FD) Leak
+
+**Fault Keywords:** `fd leak`, `file descriptors`, `process_open_fds`, `filesystem`, `EMFILE`
+
+### **Incident Context & Signatures**
+
+* **Mechanism:** The application is synchronously opening file handles via `fs.openSync()` but failing to issue corresponding `fs.close()` calls, eventually hitting the OS-level `ulimit` for open file descriptors.
+* **Telemetry Signatures:**
+* **Metrics:** Continuous increase in the `process_open_fds` metric.
+* **Logs:** `level=warn`, `component="filesystem"`, `message="Fault injection: file descriptor opened and not closed"`. (Or `level=error` with `EMFILE` when the limit is finally breached).
+
+
+* **Remediation Strategy:**
+Once file descriptors are leaked in Node.js, the simplest and most effective infrastructure-level mitigation is to restart the container, which forces the host OS kernel to reclaim all orphaned file handles.
+
+### **Executable State Payload**
+
+```json
+{
+  "scriptName": "restart_docker_container.sh",
+  "script": "docker restart $CONTAINER_NAME",
+  "params": {
+    "CONTAINER_NAME": "express-victim-service"
+  },
+  "reasoning": "The application has leaked file descriptors, threatening to hit the OS EMFILE limit. A container restart will force the operating system to reclaim all orphaned file handles and restore I/O capacity."
+}
+
+```

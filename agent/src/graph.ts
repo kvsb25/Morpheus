@@ -34,27 +34,6 @@ function routeAfterRemediation(state: GraphStateType): "remediation_tools" | "fi
   return hasPendingToolCalls(state.messages) ? "remediation_tools" : "finalize_remediation";
 }
 
-function isReviewApproved(feedback: string | null): boolean {
-  if (!feedback) {
-    return false;
-  }
-  return /\bAPPROVED\b/i.test(feedback);
-}
-
-function needsFreshTelemetry(feedback: string | null): boolean {
-  if (!feedback) {
-    return false;
-  }
-  const lower = feedback.toLowerCase();
-  return (
-    lower.includes("telemetry") ||
-    lower.includes("trace") ||
-    lower.includes("metric") ||
-    lower.includes("tempo") ||
-    lower.includes("loki")
-  );
-}
-
 /**
  * Reasoning loop: APPROVED or revision cap -> remediation; else reinterpret or re-query telemetry.
  */
