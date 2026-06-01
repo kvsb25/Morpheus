@@ -11,29 +11,33 @@ export async function getFileNames(dirPath: string): Promise<string[]> {
   }
 }
 
-// export async function runScriptFile(scriptPath:string, args: Record<string,string>): Promise<void>{
-//   return new Promise((resolve, reject) => {
-    
-//     const child = spawn(scriptPath, args);
+export async function runScriptFile(script_name:string, params: Record<string,any>): Promise<string>{
 
-//     child.stdout.on('data', (data) => {
-//       process.stdout.write(`[Script Output]: ${data}`);
-//     });
-    
-//     child.stderr.on('data', (data) => {
-//       process.stderr.write(`[Script Error]: ${data}`);
-//     });
-    
-//     child.on('close', (code) => {
-//       if (code === 0) {
-//         resolve();
-//       } else {
-//         reject(new Error(`Script exited with error code ${code}`));
-//       }
-//     });
+  const scriptPath = "../approved_scripts" + script_name;
+  const args = Object.entries(params).map(([_, value])=>value);
 
-//     child.on('error', (err) => {
-//       reject(err);
-//     });
-//   });
-// }
+  return new Promise((resolve) => {
+    
+    const child = spawn(scriptPath, args);
+
+    child.stdout.on('data', (data) => {
+      process.stdout.write(`[Script Output]: ${data}`);
+    });
+    
+    child.stderr.on('data', (data) => {
+      process.stderr.write(`[Script Error]: ${data}`);
+    });
+    
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve("Execution successfully complete");
+      } else {
+        resolve(`Script exited with error code ${code}`);
+      }
+    });
+
+    child.on('error', (err) => {
+      resolve("An error occured: "+err);
+    });
+  });
+}

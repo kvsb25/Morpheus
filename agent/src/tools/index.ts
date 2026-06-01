@@ -3,7 +3,7 @@ import { Command } from "@langchain/langgraph/web";
 import { z } from "zod";
 import { OTLPEvent } from "../state.js";
 import { retriever } from "../RAG/index.js";
-import { getFileNames/*, runScriptFile*/ } from "../utils/utils.js";
+import { getFileNames, runScriptFile } from "../utils/utils.js";
 
 // --- Deterministic analyst (Phase 1: the "How") ---
 
@@ -274,17 +274,17 @@ export const executeSafeScript = tool(
 
     // validate script and then run on terminal
 
-    // const approved_scripts: string[] = await getFileNames("../approved_scripts");
-    
-    // if(approved_scripts.includes(script_name)){
-
-    // }
+    const approved_scripts: string[] = await getFileNames("../approved_scripts");
+    let result:any = null;
+    if(approved_scripts.includes(script_name)){
+      result = await runScriptFile(script_name, params);
+    }
 
     return JSON.stringify({
       status: "executed",
       script_name,
       params,
-      message: `Mock execution of ${script_name} completed successfully.`,
+      message: result ?? "Script did not execute",
     });
   },
   {

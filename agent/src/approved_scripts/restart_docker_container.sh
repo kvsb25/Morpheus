@@ -1,0 +1,3 @@
+$CONTAINER_NAME=$1
+
+docker restart $CONTAINER_NAME

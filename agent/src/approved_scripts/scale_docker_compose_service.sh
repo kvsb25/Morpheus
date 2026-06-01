@@ -1,0 +1,8 @@
+# COMPOSE_FILE_PATH="docker-compose.yml"
+# SERVICE_NAME="express-victim-service"
+# TARGET_INSTANCES=3
+COMPOSE_FILE_PATH=$1
+SERVICE_NAME=$2
+TARGET_INSTANCES=$3
+
+docker compose -f $COMPOSE_FILE_PATH up --scale $SERVICE_NAME=$TARGET_INSTANCES -d
