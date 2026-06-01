@@ -62,8 +62,8 @@ services:
       NODE_ENV: production
       HOST: "0.0.0.0"
       PORT: "8080"
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in monitoring/.env — see ../.env.example}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      GOOGLE_MODEL: ${GOOGLE_MODEL:-gemini-3.5-flash}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID}
       TEMPO_URL: http://tempo:3200
@@ -77,6 +77,7 @@ services:
       - victoria-metrics
       - tempo
       - loki
+      - chroma
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 15s
@@ -96,6 +97,7 @@ services:
     environment:
       - ANONYMIZED_TELEMETRY=false
       - IS_PERSISTENT=TRUE
+    networks: [ltov]
 
   vmalert:
     image: victoriametrics/vmalert:v1.106.1
@@ -103,7 +105,8 @@ services:
       - "-rule=/etc/vmalert/rules/*.yml"
       - "-datasource.url=http://victoria-metrics:8428"
       - "-notifier.url=http://alertmanager:9093"
-      - "-external.url=http://localhost:8880"
+      # - "-external.url=http://localhost:8880"
+      - "-external.url=http://vmalert:8880"
       - "-evaluationInterval=30s"
     volumes:
       - ./vmalert/rules:/etc/vmalert/rules:ro
@@ -118,7 +121,8 @@ services:
     image: prom/alertmanager:v0.27.0
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--web.external-url=http://localhost:9093"
+      # - "--web.external-url=http://localhost:9093"
+      - "--web.external-url=http://alertmanager:9093"
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
@@ -152,3 +156,4 @@ volumes:
   vm-data:
   tempo-data:
   loki-data:
+  chroma-data:

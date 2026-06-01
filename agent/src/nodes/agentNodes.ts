@@ -1,4 +1,5 @@
-import { ChatOpenAI } from "@langchain/openai";
+// import { ChatOpenAI } from "@langchain/openai";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import {RCA_REVIEWER_OUTPUT_SCHEMA} from "../utils/outputSchemas.js";
 import type { StructuredToolInterface } from "@langchain/core/tools";
@@ -16,9 +17,16 @@ import {
   getLastAiMessageContent,
 } from "../utils/messages.js";
 
-function createModel() {
-  return new ChatOpenAI({
-    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+// function createModell() {
+//   return new ChatOpenAI({
+//     model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+//     temperature: 0,
+//   });
+// }
+
+function createModel(){
+  return new ChatGoogleGenerativeAI({
+    model: process.env.GOOGLE_MODEL ?? "gemini-3.5-flash",
     temperature: 0,
   });
 }
