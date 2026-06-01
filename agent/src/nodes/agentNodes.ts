@@ -191,13 +191,15 @@ export async function finalizeProposedAction(
 ): Promise<Partial<GraphStateType>> {
   const content = getLastAiMessageContent(state.messages);
   const parsed = extractProposedAction(content);
+  const fallbackAction = {
+    scriptName: "restart_db_pool",
+    params: { service: "express-victim-service" },
+    reasoning:
+      content ||
+      "Default mitigation — remediation agent did not return structured JSON action.",
+  }
+  
   return {
-    proposedAction: parsed ?? {
-      scriptName: "restart_db_pool",
-      params: { service: "express-victim-service" },
-      reasoning:
-        content ||
-        "Default mitigation — remediation agent did not return structured JSON action.",
-    },
+    proposedAction: parsed ?? fallbackAction,
   };
 }

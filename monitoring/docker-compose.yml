@@ -85,6 +85,17 @@ services:
       start_period: 25s
     networks: [ltov]
     restart: unless-stopped
+  
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+      - IS_PERSISTENT=TRUE
 
   vmalert:
     image: victoriametrics/vmalert:v1.106.1

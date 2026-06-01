@@ -2,6 +2,8 @@ import { tool } from "@langchain/core/tools";
 import { Command } from "@langchain/langgraph/web";
 import { z } from "zod";
 import { OTLPEvent } from "../state.js";
+import { retriever } from "../RAG/index.js";
+import { getFileNames/*, runScriptFile*/ } from "../utils/utils.js";
 
 // --- Deterministic analyst (Phase 1: the "How") ---
 
@@ -235,48 +237,26 @@ export const fetchFileFromCommit = tool(
 // --- Remediation ---
 
 export const searchRunbooks = tool(
-  async ({ fault_keyword }) => {
-    return JSON.stringify({
-      fault_keyword,
-      runbooks: [
-        {
-          id: "rb-db-pool-exhaustion",
-          title: "PostgreSQL connection pool exhaustion",
-          steps: [
-            "Drain traffic from affected pods",
-            "Restart connection pool with bounded concurrency",
-            "Validate db.query_execution error rate returns to baseline",
-          ],
-          approved_script: "restart_db_pool",
-        },
-        {
-          id: "rb-event-loop-block",
-          title: "Node.js event loop blocking",
-          steps: ["Identify sync CPU loops", "Move work off main thread or add timeouts"],
-          approved_script: "throttle_fault_endpoint",
-        },
-      ],
-    });
+  async ({ query_for_searching_rag }) => {
+    const ragResult = await retriever(query_for_searching_rag);
+    return JSON.stringify(ragResult);
   },
   {
     name: "search_runbooks",
     description:
-      "Searches engineering wikis for known mitigation steps related to the fault.",
+      "Searches engineering wikis, runbooks and postmortem reports for known mitigation steps related to the fault using query containing relevant keywords for RAG retrieval.",
     schema: z.object({
-      fault_keyword: z.string(),
+      query_for_searching_rag: z.string(),
     }),
   }
 );
 
 export const checkCurrentCapabilities = tool(
   async () => {
+    const approved_scripts: string[] = await getFileNames("../approved_scripts");
+
     return JSON.stringify({
-      approved_scripts: [
-        "restart_db_pool",
-        "throttle_fault_endpoint",
-        "scale_victim_service",
-        "drain_fd_leak_handles",
-      ],
+      approved_scripts
     });
   },
   {
@@ -293,6 +273,13 @@ export const executeSafeScript = tool(
   async ({ script_name, params }) => {
 
     // validate script and then run on terminal
+
+    // const approved_scripts: string[] = await getFileNames("../approved_scripts");
+    
+    // if(approved_scripts.includes(script_name)){
+
+    // }
+
     return JSON.stringify({
       status: "executed",
       script_name,
