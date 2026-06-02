@@ -87,10 +87,10 @@ app.post("/api/fault/db-crash", async (req, res) => {
 });
 
 app.get("/api/fault/memory-leak", (_req, res) => {
-  const chunk = new Array(20_000).fill({
+  const chunk = Array.from({ length: 20_000 }, () => ({
     payload: "x".repeat(1024),
     timestamp: Date.now(),
-  });
+  }));
   memoryLeakStore.push(chunk);
 
   logger.warn("Fault injection: retaining heap chunk in global store", {

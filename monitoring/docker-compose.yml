@@ -62,8 +62,8 @@ services:
       NODE_ENV: production
       HOST: "0.0.0.0"
       PORT: "8080"
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
-      GOOGLE_MODEL: ${GOOGLE_MODEL:-gemini-3.5-flash}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID}
       TEMPO_URL: http://tempo:3200

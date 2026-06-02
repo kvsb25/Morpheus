@@ -4,7 +4,8 @@ const path = require("path");
 const v8 = require("v8");
 const winston = require("winston");
 const Transport = require("winston-transport");
-const { context, trace, metrics, logs, SpanStatusCode } = require("@opentelemetry/api");
+const { context, trace, metrics, SpanStatusCode } = require("@opentelemetry/api");
+const { logs } = require('@opentelemetry/api-logs');
 const { NodeSDK } = require("@opentelemetry/sdk-node");
 const { Resource } = require("@opentelemetry/resources");
 const { SemanticResourceAttributes } = require("@opentelemetry/semantic-conventions");
@@ -108,7 +109,7 @@ const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || "info",
   format: winston.format.combine(
     winston.format.timestamp(),
-    winston.format(enrichLogWithSpanContext),
+    winston.format(enrichLogWithSpanContext)(),
     winston.format.printf((info) => {
       // Agent/Loki schema: structured JSON with trace_id + span_id for 3D correlation.
       return JSON.stringify({

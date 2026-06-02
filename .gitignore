@@ -1,6 +1,8 @@
 .env
 node_modules/
+chroma-data/
 victim-service/fd-leak-dummy.txt
 two-phase RCA process.txt
 rough.js
 rough.txt
+dist/
