@@ -26,8 +26,9 @@ import {
 
 function createModel(){
   return new ChatGoogleGenerativeAI({
-    model: process.env.GOOGLE_MODEL ?? "gemini-3.5-flash",
+    model: process.env.GEMINI_MODEL ?? "gemini-3.5-flash",
     temperature: 0,
+    apiKey: process.env.GEMINI_API_KEY
   });
 }
 
