@@ -1,0 +1,8 @@
+{
+  "node_version": "20",
+  "dependencies": ["."],
+  "graphs": {
+    "my_agent": "./dist/graph.js:graph"
+  },
+  "env": ".env"
+}
