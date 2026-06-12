@@ -481,3 +481,11 @@ On `approved`, the Execution Gatekeeper runs the script proposed by the remediat
     │   └── victim-service-slis.yml  # 14 PromQL alert rules
     └── alertmanager/alertmanager.yml
 ```
+---
+
+## Optimizations and Enhancements
+
+1. Remediation agent does not know what arguments to pass for each of the approved scripts, add a feature so that checkCurrentCapabilities tool gives script argument information to the LLM.
+2. Only RCA analysis review is done in the current workflow, add another review loop for remediation script review
+3. Review loop to assess the environment after remediation script execution. To provide feedback whether the remediation was successful or further inspection is needed.
+4. A UI for adding approved scripts and agent state or an addition to already existing monitoring tool UIs

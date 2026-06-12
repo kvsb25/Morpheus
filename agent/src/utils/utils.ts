@@ -13,7 +13,7 @@ export async function getFileNames(dirPath: string): Promise<string[]> {
 
 export async function runScriptFile(script_name:string, params: Record<string,any>): Promise<string>{
 
-  const scriptPath = "../approved_scripts" + script_name;
+  const scriptPath = "../approved_scripts/" + script_name;
   const args = Object.entries(params).map(([_, value])=>value);
 
   return new Promise((resolve) => {
