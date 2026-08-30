@@ -184,6 +184,7 @@ export async function rcaReviewer(state: GraphStateType): Promise<Partial<GraphS
   };
 }
 
+// make the remediation process autonomuos
 export async function remediationAgent(state: GraphStateType): Promise<Partial<GraphStateType>> {
   const { remediationTools } = await import("../tools/index.js");
   const result = await invokeLLM(
@@ -195,6 +196,8 @@ export async function remediationAgent(state: GraphStateType): Promise<Partial<G
   return result;
 }
 
+// later: validate the code for syntax (the remediation to be executed)
+// later: add edge from this node to remediationAgent to inform it on syntax error
 export async function finalizeProposedAction(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
@@ -210,5 +213,53 @@ export async function finalizeProposedAction(
   
   return {
     proposedAction: parsed ?? fallbackAction,
+  };
+}
+
+/*
+ * Programmatic gatekeeper — no LLM. Executes only after humanApproval is set post-interrupt.
+ */
+export async function executionGatekeeper(
+  state: GraphStateType
+): Promise<Partial<GraphStateType>> {
+  
+  const { escalateToHumanPager, executeSafeScript } = await import("../tools/index.js")
+  const { humanApproval, proposedAction } = state;
+
+  if (humanApproval === "approved" && proposedAction) {
+    const result = await executeSafeScript.invoke({
+      script_name: proposedAction.scriptName,
+      params: proposedAction.params,
+    });
+    return {
+      messages: [
+        new AIMessage({
+          content: `Gatekeeper executed approved script.\n${String(result)}`,
+        }),
+      ],
+    };
+  }
+
+  const reason =
+    humanApproval === "rejected"
+      ? "Human rejected the proposed remediation."
+      : humanApproval === "escalated"
+        ? "Human escalated without automated execution."
+        : "Automated remediation unavailable or not approved.";
+
+  const severity =
+    state.incident?.metricName === "node_event_loop_utilization" ? "SEV-1" : "SEV-2";
+
+  const result = await escalateToHumanPager.invoke({
+    reason: `${reason} Proposed: ${proposedAction?.scriptName ?? "none"}.`,
+    severity_level: severity,
+  });
+
+  return {
+    messages: [
+      new AIMessage({
+        content: `Gatekeeper escalated to on-call.\n${String(result)}`,
+      }),
+    ],
   };
 }

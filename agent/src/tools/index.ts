@@ -148,7 +148,7 @@ export const queryMetrics = tool(
       params.append("step", "30s");
     }
 
-    const response = await fetch(`${vmUrl}${endpoint}?${params}`);
+    const response = await fetch(`${vmUrl}/${endpoint}?${params}`);
     if (!response.ok) {
       throw new Error(`VictoriaMetrics HTTP error: ${response.statusText}`);
     }
@@ -281,7 +281,7 @@ export const executeSafeScript = tool(
     }
 
     return JSON.stringify({
-      status: "executed",
+      status: result ? "executed" : "not_executed",
       script_name,
       params,
       message: result ?? "Script did not execute",

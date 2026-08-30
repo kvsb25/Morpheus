@@ -16,6 +16,7 @@ export type ProposedAction = {
 
 export type HumanApproval = "pending" | "approved" | "rejected" | "escalated";
 
+// open telemetry event
 export type OTLPEvent = {
   timeUnixNano: string;
   name: string;
