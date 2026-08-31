@@ -64,6 +64,10 @@ services:
       PORT: "8080"
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      # Presentation aid: webhook posts a scripted Slack approval card instead of
+      # running the RCA graph. Set to "false" to restore the real workflow.
+      DEMO_MODE: ${DEMO_MODE:-true}
+      DEMO_STEP_DELAY_MS: ${DEMO_STEP_DELAY_MS:-3000}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID}
       TEMPO_URL: http://tempo:3200
