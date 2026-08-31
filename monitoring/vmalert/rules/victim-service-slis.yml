@@ -34,7 +34,7 @@ groups:
         expr: |
           (
             nodejs_v8_heap_space_size_bytes{service_name="express-victim-service", space="old_space"}
-            / on(service_name, space)
+            /
             v8_heap_space_size_max_bytes{service_name="express-victim-service", space="old_space"}
           ) > 0.80
         for: 10m
@@ -51,7 +51,7 @@ groups:
         expr: |
           (
             nodejs_v8_heap_space_size_bytes{service_name="express-victim-service", space="old_space"}
-            / on(service_name, space)
+            /
             v8_heap_space_size_max_bytes{service_name="express-victim-service", space="old_space"}
           ) > 0.90
         for: 5m
@@ -175,13 +175,13 @@ groups:
           agent_rca_hint: "Compare with node_event_loop_utilization and db spans."
 
   - name: victim-service-database
-    interval: 30s
+    interval: 10s
     rules:
       - alert: DbPoolUtilizationWarning
         expr: |
           (
             db_client_connections_usage{service_name="express-victim-service", state="active"}
-            / on(service_name)
+            / ignoring(state)
             db_client_connections_usage{service_name="express-victim-service", state="max"}
           ) > 0.85
         for: 5m
@@ -198,10 +198,10 @@ groups:
         expr: |
           (
             db_client_connections_usage{service_name="express-victim-service", state="active"}
-            / on(service_name)
+            / ignoring(state)
             db_client_connections_usage{service_name="express-victim-service", state="max"}
-          ) >= 1
-        for: 1m
+          ) > 0.5
+        for: 15s
         labels:
           severity: critical
           metric_name: db_client_connections_usage

@@ -33,19 +33,15 @@ exporters:
     tls:
       insecure: true
 
-  # Logs -> Grafana Loki (native push API; logs arrive from OTLP log pipeline)
-  loki:
-    endpoint: http://loki:3100/loki/api/v1/push
-    default_labels_enabled:
-      exporter: false
-      job: true
-    labels:
-      attributes:
-        service.name: "service_name"
-        component: "component"
-        level: "level"
-      resource:
-        service.name: "service_name"
+  # Logs -> Grafana Loki (native OTLP ingest at /otlp/v1/logs).
+  # The `loki` exporter is deprecated upstream and its `labels:` mapping was
+  # removed in collector v0.107.0. Loki 3.x indexes resource attributes itself:
+  # service.name -> service_name label; log attributes (component, trace_id,
+  # span_id, level) land in structured metadata.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
 
 extensions:
   health_check:
@@ -65,4 +61,4 @@ service:
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [loki]
+      exporters: [otlphttp/loki]

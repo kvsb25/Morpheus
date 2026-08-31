@@ -5,7 +5,7 @@ global:
 route:
   receiver: sre-agent-webhook
   group_by: [alertname, service_name]
-  group_wait: 10s
+  group_wait: 5s
   group_interval: 30s
   repeat_interval: 1h
 
