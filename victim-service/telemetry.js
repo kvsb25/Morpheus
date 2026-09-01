@@ -70,6 +70,22 @@ function enrichLogWithSpanContext(info) {
   return info;
 }
 
+// Agent/Loki schema: structured JSON with trace_id + span_id for 3D correlation.
+// Loki stores the OTLP body verbatim as the log line, so console and Loki must
+// carry the identical payload — the agent runs `| json | trace_id=...` on it.
+function buildLogPayload(info) {
+  return {
+    timestamp: info.timestamp,
+    level: info.level,
+    message: info.message,
+    trace_id: info.trace_id || null,
+    span_id: info.span_id || null,
+    "service.name": info["service.name"] || serviceName,
+    component: info.component || "express-victim-service",
+    ...(info.meta && typeof info.meta === "object" ? { meta: info.meta } : {}),
+  };
+}
+
 class OTelWinstonTransport extends Transport {
   log(info, callback) {
     const attributes = {
@@ -95,7 +111,7 @@ class OTelWinstonTransport extends Transport {
 
     otelAppLogger.emit({
       severityText: String(info.level || "info").toUpperCase(),
-      body: info.message,
+      body: JSON.stringify(buildLogPayload(info)),
       attributes,
       traceId: info.trace_id || undefined,
       spanId: info.span_id || undefined,
@@ -110,24 +126,11 @@ const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format(enrichLogWithSpanContext)(),
-    winston.format.printf((info) => {
-      // Agent/Loki schema: structured JSON with trace_id + span_id for 3D correlation.
-      return JSON.stringify({
-        timestamp: info.timestamp,
-        level: info.level,
-        message: info.message,
-        trace_id: info.trace_id || null,
-        span_id: info.span_id || null,
-        "service.name": info["service.name"],
-        component: info.component,
-        ...(info.meta && typeof info.meta === "object" ? { meta: info.meta } : {}),
-      });
-    })
+    winston.format.printf((info) => JSON.stringify(buildLogPayload(info)))
   ),
   transports: [new winston.transports.Console(), new OTelWinstonTransport()],
 });
 
-const meter = metrics.getMeter("express-victim-service-meter");
 const eluHistogram = monitorEventLoopDelay({ resolution: 20 });
 eluHistogram.enable();
 let previousElu = performance.eventLoopUtilization();
@@ -155,69 +158,81 @@ setInterval(() => {
   const newSpace = spaces.find((space) => space.space_name === "new_space");
   latestOldSpaceBytes = oldSpace ? oldSpace.space_used_size : 0;
   latestNewSpaceBytes = newSpace ? newSpace.space_used_size : 0;
-  latestOldSpaceMaxBytes = oldSpace ? oldSpace.space_size : v8.getHeapStatistics().heap_size_limit;
+  // heap_size_limit, not oldSpace.space_size: V8 grows a space's committed size on
+  // demand, so space_used_size/space_size sits near 1.0 even on an idle process and
+  // the old_space utilization SLIs would fire minutes after every boot.
+  latestOldSpaceMaxBytes = v8.getHeapStatistics().heap_size_limit;
   latestOpenFds = getOpenFdEstimate();
   latestMaxFds = resolveMaxFds();
 }, 1000).unref();
 
-const eluGauge = meter.createObservableGauge("node_event_loop_utilization", {
-  description: "Fraction of time the event loop is busy (0–1). Spikes on block-loop fault.",
-  unit: "1",
-});
-eluGauge.addCallback((observableResult) => {
-  observableResult.observe(latestEluRatio);
-});
+// Must run AFTER sdk.start(): the metrics API has no proxy provider, so a meter
+// taken before the global MeterProvider is registered is a NoopMeter forever and
+// every gauge below would be silently dropped (and every vmalert SLI never fire).
+function registerRuntimeMetrics() {
+  const meter = metrics.getMeter("express-victim-service-meter");
 
-const p99DelayGauge = meter.createObservableGauge("node_event_loop_delay_p99_ms", {
-  description: "p99 event loop delay in milliseconds",
-  unit: "ms",
-});
-p99DelayGauge.addCallback((observableResult) => {
-  observableResult.observe(latestP99DelayMs);
-});
+  // No `unit:` on the next two gauges. The Prometheus remote-write exporter has
+  // add_metric_suffixes on by default and appends the unit to the metric name
+  // ("1" -> _ratio, "ms" -> _milliseconds), which would leave the vmalert SLI
+  // expressions and the agent's metric_name labels pointing at names VM never sees.
+  const eluGauge = meter.createObservableGauge("node_event_loop_utilization", {
+    description: "Fraction of time the event loop is busy (0–1). Spikes on block-loop fault.",
+  });
+  eluGauge.addCallback((observableResult) => {
+    observableResult.observe(latestEluRatio);
+  });
 
-const heapGauge = meter.createObservableGauge("nodejs_v8_heap_space_size_bytes", {
-  description: "Heap space usage by V8 space — old_space trend reveals memory-leak endpoint.",
-  unit: "By",
-});
-heapGauge.addCallback((observableResult) => {
-  observableResult.observe(latestOldSpaceBytes, { space: "old_space" });
-  observableResult.observe(latestNewSpaceBytes, { space: "new_space" });
-});
+  const p99DelayGauge = meter.createObservableGauge("node_event_loop_delay_p99_ms", {
+    description: "p99 event loop delay in milliseconds",
+  });
+  p99DelayGauge.addCallback((observableResult) => {
+    observableResult.observe(latestP99DelayMs);
+  });
 
-const heapMaxGauge = meter.createObservableGauge("v8_heap_space_size_max_bytes", {
-  description: "Configured max size per V8 heap space for utilization SLI denominators",
-  unit: "By",
-});
-heapMaxGauge.addCallback((observableResult) => {
-  observableResult.observe(latestOldSpaceMaxBytes, { space: "old_space" });
-});
+  const heapGauge = meter.createObservableGauge("nodejs_v8_heap_space_size_bytes", {
+    description: "Heap space usage by V8 space — old_space trend reveals memory-leak endpoint.",
+    unit: "By",
+  });
+  heapGauge.addCallback((observableResult) => {
+    observableResult.observe(latestOldSpaceBytes, { space: "old_space" });
+    observableResult.observe(latestNewSpaceBytes, { space: "new_space" });
+  });
 
-const openFdGauge = meter.createObservableGauge("process_open_fds", {
-  description: "Open file descriptors — rises when fd-leak endpoint retains handles",
-  unit: "{fd}",
-});
-openFdGauge.addCallback((observableResult) => {
-  observableResult.observe(latestOpenFds);
-});
+  const heapMaxGauge = meter.createObservableGauge("v8_heap_space_size_max_bytes", {
+    description: "Configured max size per V8 heap space for utilization SLI denominators",
+    unit: "By",
+  });
+  heapMaxGauge.addCallback((observableResult) => {
+    observableResult.observe(latestOldSpaceMaxBytes, { space: "old_space" });
+  });
 
-const maxFdGauge = meter.createObservableGauge("process_max_fds", {
-  description: "OS file descriptor soft limit for FD utilization alerts",
-  unit: "{fd}",
-});
-maxFdGauge.addCallback((observableResult) => {
-  observableResult.observe(latestMaxFds);
-});
+  const openFdGauge = meter.createObservableGauge("process_open_fds", {
+    description: "Open file descriptors — rises when fd-leak endpoint retains handles",
+    unit: "{fd}",
+  });
+  openFdGauge.addCallback((observableResult) => {
+    observableResult.observe(latestOpenFds);
+  });
 
-const dbPoolGauge = meter.createObservableGauge("db_client_connections_usage", {
-  description: "Simulated PostgreSQL pool usage for db-crash SLI alerts",
-  unit: "{connection}",
-});
-dbPoolGauge.addCallback((observableResult) => {
-  observableResult.observe(dbPoolActive, { state: "active" });
-  observableResult.observe(Math.max(0, dbPoolMax - dbPoolActive), { state: "idle" });
-  observableResult.observe(dbPoolMax, { state: "max" });
-});
+  const maxFdGauge = meter.createObservableGauge("process_max_fds", {
+    description: "OS file descriptor soft limit for FD utilization alerts",
+    unit: "{fd}",
+  });
+  maxFdGauge.addCallback((observableResult) => {
+    observableResult.observe(latestMaxFds);
+  });
+
+  const dbPoolGauge = meter.createObservableGauge("db_client_connections_usage", {
+    description: "Simulated PostgreSQL pool usage for db-crash SLI alerts",
+    unit: "{connection}",
+  });
+  dbPoolGauge.addCallback((observableResult) => {
+    observableResult.observe(dbPoolActive, { state: "active" });
+    observableResult.observe(Math.max(0, dbPoolMax - dbPoolActive), { state: "idle" });
+    observableResult.observe(dbPoolMax, { state: "max" });
+  });
+}
 
 function recordDbPoolPressure() {
   dbPoolActive = Math.min(dbPoolMax, dbPoolActive + 2);
@@ -283,6 +298,7 @@ function sanitizePayload(payload) {
 
 async function startTelemetry() {
   await sdk.start();
+  registerRuntimeMetrics();
   logger.info("OpenTelemetry initialized — exporting via OTLP collector", {
     component: "telemetry",
     meta: { otlpEndpoint, serviceName },

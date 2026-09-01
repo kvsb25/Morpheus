@@ -78,6 +78,66 @@ export async function resumeAfterHumanReview(
   );
 }
 
+/**
+ * DEMO / PRESENTATION PATH — NOT the real RCA workflow.
+ *
+ * Enabled only when DEMO_MODE=true. This deliberately does NOT invoke rcaGraph:
+ * it waits out a short scripted delay and then posts the same Slack approval card
+ * a real run would produce, proposing the flush_pg_connections.sh mitigation.
+ * Nothing here queries telemetry, calls Gemini, or reasons about the incident.
+ *
+ * It exists so the human-in-the-loop step can be demonstrated while the Gemini
+ * free-tier quota is exhausted. With DEMO_MODE unset, runIncidentFromWebhook and
+ * the full graph run exactly as before.
+ */
+export async function runDemoIncident(
+  payload: VmalertWebhookPayload,
+  threadId: string
+): Promise<GraphStateType> {
+  const alert = payload.alerts?.[0];
+  const stepDelayMs = Number.parseInt(process.env.DEMO_STEP_DELAY_MS ?? "3000", 10);
+  const pause = () => new Promise((resolve) => setTimeout(resolve, stepDelayMs));
+
+  const incident = {
+    alertId: alert?.fingerprint ?? alert?.labels?.alertname ?? "unknown-alert",
+    alertName: alert?.labels?.alertname ?? "unknown-alertname",
+    metricName: alert?.labels?.metric_name ?? "unknown-metric",
+    timestamp: alert?.startsAt ?? new Date().toISOString(),
+  };
+
+  console.log("[sre-agent] DEMO_MODE — simulated run, RCA graph NOT invoked");
+  console.log("[agent] Phase 1: deterministic analysis");
+  await pause();
+  console.log("[agent] Phase 2: systemic interpretation");
+  await pause();
+  console.log("[agent] RCA review passed — drafting remediation");
+  await pause();
+  console.log("[agent] Paused before executionGatekeeper — awaiting humanApproval");
+
+  return {
+    messages: [],
+    incident,
+    traceId: null,
+    traceEvents: null,
+    deterministicAnalysis:
+      "Connection pool saturated: active connections reached max (10/10); " +
+      "db.query_execution spans returned timeouts under NOWAIT lock contention.",
+    interpretation:
+      "Requests acquire pool connections that are never released on the error path, " +
+      "so the pool drains under sustained traffic and every later query times out.",
+    reviewFeedback: null,
+    revisionCount: 1,
+    proposedAction: {
+      scriptName: "flush_pg_connections.sh",
+      params: { service: "express-victim-service" },
+      reasoning:
+        "Flush idle/leaked PostgreSQL connections to release the exhausted pool and " +
+        "restore query capacity for express-victim-service.",
+    },
+    humanApproval: "pending",
+  };
+}
+
 // send proposed action with the notification
 export async function sendNotiForHumanApproval( threadId: string, pauseState: GraphStateType): Promise<void>{
 

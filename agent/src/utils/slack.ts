@@ -13,12 +13,16 @@ export async function sendSlackIncidentAlert(channelId: string, threadId: string
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*🚨 Incident Triggered: ${alertDetails?.incident?.alertId}*\n*Metric:* ${alertDetails?.incident?.metricName}\n*Timestamp:* ${alertDetails?.incident?.timestamp}\n\n*Proposed Action: *\`\`\`${alertDetails?.proposedAction}\`\`\``,
+          // JSON.stringify, not bare interpolation — proposedAction is an object and
+          // would otherwise render as "[object Object]" in the card.
+          text: `*🚨 Incident Triggered: ${alertDetails?.incident?.alertId}*\n*Metric:* ${alertDetails?.incident?.metricName}\n*Timestamp:* ${alertDetails?.incident?.timestamp}\n\n*Proposed Action: *\`\`\`${JSON.stringify(alertDetails?.proposedAction, null, 2)}\`\`\``,
         },
       },
       {
         type: "actions",
-        block_id: "incident_actions_block",
+        // threadId rides in the block_id so the actions endpoint can recover it
+        // even when Slack omits message metadata from the interaction payload.
+        block_id: `incident_actions_block:${threadId}`,
         elements: [
           {
             type: "button",

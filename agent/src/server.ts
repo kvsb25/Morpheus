@@ -2,10 +2,15 @@ import express, { type Request, type Response } from "express";
 import { fileURLToPath } from "node:url";
 import {
   resumeAfterHumanReview,
+  runDemoIncident,
   runIncidentFromWebhook,
   sendNotiForHumanApproval,
   type VmalertWebhookPayload,
 } from "./index.js";
+
+// When true the webhook posts a scripted Slack approval card instead of running
+// the RCA graph. Presentation aid only — see runDemoIncident in index.ts.
+const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -21,6 +26,10 @@ function threadIdFromPayload(payload: VmalertWebhookPayload): string {
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+// Slack posts interactive payloads as application/x-www-form-urlencoded with a
+// single `payload` field. Without this parser req.body.payload is undefined and
+// every button click fails.
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 app.get("/health", (_req: Request, res: Response) => {
   res.status(200).json({ status: "ok", service: "sre-agent" });
@@ -33,7 +42,9 @@ app.post("/webhook/vmalert", async (req: Request, res: Response) => {
 
   console.log(`[sre-agent] vmalert webhook received (thread=${threadId})`);
 
-  const state = await runIncidentFromWebhook(payload, threadId);
+  const state = DEMO_MODE
+    ? await runDemoIncident(payload, threadId)
+    : await runIncidentFromWebhook(payload, threadId);
   await sendNotiForHumanApproval(threadId, state);
   res.status(202).json({
     status: "paused_for_human_review",
@@ -44,23 +55,62 @@ app.post("/webhook/vmalert", async (req: Request, res: Response) => {
   });
 });
 
-// set ngrok tunnel for dev purposes
+/**
+ * Slack interactive-component endpoint (set this URL in the app's Interactivity
+ * settings; an ngrok tunnel works for dev).
+ *
+ * Slack closes the interaction if it does not get a 2xx within 3 seconds, so this
+ * replies immediately and resumes the graph in the background rather than awaiting it.
+ */
 app.post("/api/slack/actions", async (req: Request, res: Response) => {
-  if (!req.body.payload) {
+  if (!req.body?.payload) {
     return res.status(400).send("Missing payload");
   }
 
   const payload = JSON.parse(req.body.payload);
+  const action = payload.actions?.[0];
+  const humanApproval = action?.value as "approved" | "rejected" | "escalated";
 
-  const humanApproval = payload.actions[0].value as "approved" | "rejected" | "escalated";
-  const threadId = payload.message.metadata.event_payload.threadId as string;
+  // message.metadata is not guaranteed to survive the round trip, so fall back to
+  // the threadId encoded in the block_id when building the card.
+  const threadId: string | undefined =
+    payload.message?.metadata?.event_payload?.threadId ??
+    (typeof action?.block_id === "string" && action.block_id.includes(":")
+      ? action.block_id.slice(action.block_id.indexOf(":") + 1)
+      : undefined);
 
-  await resumeAfterHumanReview(threadId, humanApproval);
+  if (!humanApproval || !threadId) {
+    console.error("[sre-agent] slack action missing approval or threadId", {
+      humanApproval,
+      block_id: action?.block_id,
+    });
+    return res.status(200).json({
+      text: "⚠️ Could not resolve which incident this button belongs to.",
+      replace_original: false,
+    });
+  }
 
-  return res.status(200).json({
-    text: `✅ Action recorded: *${humanApproval.toUpperCase()}* by <@${payload.user.id}>`,
-    replace_original: true 
+  console.log(`[sre-agent] slack action ${humanApproval} (thread=${threadId})`);
+
+  // Answer Slack first — the resume path runs the graph and takes far longer than
+  // Slack's 3s budget.
+  res.status(200).json({
+    text: `✅ Action recorded: *${humanApproval.toUpperCase()}* by <@${payload.user?.id ?? "unknown"}>`,
+    replace_original: true,
   });
+
+  if (DEMO_MODE) {
+    // No graph ran, so there is no checkpoint to resume from.
+    console.log(`[sre-agent] DEMO_MODE — skipping graph resume for ${humanApproval}`);
+    return;
+  }
+
+  try {
+    await resumeAfterHumanReview(threadId, humanApproval);
+    console.log(`[sre-agent] workflow resumed and completed (thread=${threadId})`);
+  } catch (err) {
+    console.error(`[sre-agent] resume failed (thread=${threadId})`, err);
+  }
 })
 
 app.use((_req: Request, res: Response) => {

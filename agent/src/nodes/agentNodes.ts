@@ -28,8 +28,44 @@ function createModel(){
   return new ChatGoogleGenerativeAI({
     model: process.env.GEMINI_MODEL ?? "gemini-3.5-flash",
     temperature: 0,
-    apiKey: process.env.GEMINI_API_KEY
+    apiKey: process.env.GEMINI_API_KEY,
+    // Default is 6. On a 429 that turns one logical call into six requests with
+    // backoff, which keeps the rate limit alive instead of letting it clear.
+    maxRetries: 2,
   });
+}
+
+/**
+ * Serializes every Gemini call and spaces them by GEMINI_MIN_INTERVAL_MS.
+ *
+ * The graph's three tool loops (analyst, interpreter, remediation) issue their
+ * calls back to back with no delay, which bursts well past the free-tier RPM
+ * within a single incident. Calls queue on one promise chain, so concurrent
+ * nodes wait their turn rather than firing in parallel.
+ */
+const GEMINI_MIN_INTERVAL_MS = Number.parseInt(
+  process.env.GEMINI_MIN_INTERVAL_MS ?? "7000",
+  10
+);
+
+let geminiQueue: Promise<unknown> = Promise.resolve();
+let lastGeminiCallStartedAt = 0;
+
+function throttleGemini<T>(fn: () => Promise<T>): Promise<T> {
+  const run = geminiQueue.then(async () => {
+    const waitMs = lastGeminiCallStartedAt + GEMINI_MIN_INTERVAL_MS - Date.now();
+    if (waitMs > 0) {
+      console.log(`[sre-agent] throttling Gemini call — waiting ${waitMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    lastGeminiCallStartedAt = Date.now();
+    return fn();
+  });
+
+  // Keep the chain alive even if this call rejects, so one failure does not
+  // wedge every later call behind a permanently rejected promise.
+  geminiQueue = run.catch(() => undefined);
+  return run;
 }
 
 function buildContextMessage(state: GraphStateType): string {
@@ -57,11 +93,10 @@ async function invokeLLM(
   const humanContent = extraHuman ?? buildContextMessage(state);
   const fullSystemPrompt = `${systemPrompt}\n\n### CURRENT TASK CONTEXT:\n${humanContent}`;
   
-  const response = await model.invoke([
-    new SystemMessage(fullSystemPrompt),
-    ...state.messages,
-  ]);
-  return { messages: [new AIMessage(response)] };
+  const response = await throttleGemini(() =>
+    model.invoke([new SystemMessage(fullSystemPrompt), ...state.messages])
+  );
+  return { messages: [response] };
 }
 
 export async function deterministicAnalyst(
@@ -162,20 +197,22 @@ export async function finalizeInterpretation(
 export async function rcaReviewer(state: GraphStateType): Promise<Partial<GraphStateType>> {
   const baseModel = createModel();
   const model = baseModel.withStructuredOutput(RCA_REVIEWER_OUTPUT_SCHEMA)
-  const response = await model.invoke([
-    new SystemMessage(RCA_REVIEWER_SYSTEM_PROMPT),
-    new HumanMessage(
-      [
-        "Evaluate alignment between Phase 1 (deterministic) and Phase 2 (interpretation).",
-        `revisionCount: ${state.revisionCount}`,
-        "--- deterministicAnalysis ---",
-        state.deterministicAnalysis ?? "(missing)",
-        "--- interpretation ---",
-        state.interpretation ?? "(missing)",
-        "Respond with APPROVED or a detailed critique.",
-      ].join("\n\n")
-    ),
-  ]);
+  const response = await throttleGemini(() =>
+    model.invoke([
+      new SystemMessage(RCA_REVIEWER_SYSTEM_PROMPT),
+      new HumanMessage(
+        [
+          "Evaluate alignment between Phase 1 (deterministic) and Phase 2 (interpretation).",
+          `revisionCount: ${state.revisionCount}`,
+          "--- deterministicAnalysis ---",
+          state.deterministicAnalysis ?? "(missing)",
+          "--- interpretation ---",
+          state.interpretation ?? "(missing)",
+          "Respond with APPROVED or a detailed critique.",
+        ].join("\n\n")
+      ),
+    ])
+  );
 
   return {
     messages: [new AIMessage(String(response.logicalLeap))],
